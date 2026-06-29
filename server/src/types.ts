@@ -9,6 +9,15 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
+  // 黄金多因子(仅 au9999 真实数据加载时填充,对齐到本交易日的前向填充值)。
+  // 这些是 ChatGPT/Gemini 建议的"黄金定价拆解"驱动因子,现已进入 goldFactor
+  // 策略评分。挂到每根 K 线上,backtestSignal 切片时随 K 线一起走,无未来泄漏。
+  // 其它资产/其它策略忽略这些字段。缺失(早期或拉取失败)时为 undefined,
+  // goldFactor 自动回退到纯 grid 逻辑。
+  xau?: number;     // 国际现货金 XAU/USD 当日收盘(美元/盎司)
+  cnh?: number;     // 美元兑离岸人民币 USD/CNH 当日收盘
+  dxy?: number;     // 美元指数 DXY 当日收盘
+  premium?: number; // 国内溢价(人民币/克)= close - xau*cnh/31.1035
 }
 
 // 数据来源类型
@@ -28,6 +37,8 @@ export interface AssetConfig {
   basePrice: number;
   drift: number;      // 年化漂移(趋势),正数看涨
   volatility: number; // 年化波动率
+  // 背景动态搜索关键词(东方财富新闻搜索,多词合并去重,只展示不进分数)
+  newsKeywords?: string[];
 }
 
 // 带运行时序列的资产
@@ -75,6 +86,20 @@ export interface AssetRadarItem {
   price: number;
   changePct: number;      // 最新一日涨跌幅 %
   signal: Signal;
+  loaded: 'csv' | 'real' | 'simulated'; // C1:数据来源,模拟数据前端标红
+  stale: boolean;                       // C2:最新K线过期,前端警告
+  intraday?: IntradaySnapshot;          // 盘中估值/实时最新价(不注入策略序列)
+  lowConfidence?: boolean;              // C3:该信号历史回测胜率<50%(matched>=10),前端标灰警示 F4
+}
+
+// 盘中快照:基金=估值(fundgz),黄金=实时最新价(eastmoney)。
+// 单独存储,不并入 candles —— 估值 ≠ 收盘净值,注入会污染 MA/回测。
+export interface IntradaySnapshot {
+  price: number;
+  changePct: number;   // 相对昨收 %
+  time: string;        // gztime 或实时时间
+  source: 'fundgz' | 'eastmoney_rt';
+  isEstimate: boolean; // true=盘中估值(未确认),false=实时成交价
 }
 
 // 详情接口返回
@@ -86,6 +111,7 @@ export interface BacktestResult {
   avgReturn: number;      // 未来 horizon 日平均收益 %
   horizon: number;        // 回测窗口(交易日)
   note: string;           // 人话总结,如 "历史上类似信号 20 日内上涨概率 68%"
+  sampleInsufficient?: boolean; // 数据不足无法回测(C4:不许静默 undefined)
 }
 
 export interface AssetDetail {
@@ -98,6 +124,17 @@ export interface AssetDetail {
   backtest?: BacktestResult;
 }
 
+// 背景动态(新闻)条目 —— 只展示给人看,不参与信号/回测(C3/C4 不受影响)。
+// sentiment 由关键词规则初判(非 LLM,确定性),仅作快速扫读辅助,标"规则初判"。
+export type NewsSentiment = '利好' | '利空' | '中性';
+export interface NewsItem {
+  title: string;
+  date: string;   // YYYY-MM-DD HH:mm:ss
+  url: string;
+  source: string; // 媒体名
+  sentiment: NewsSentiment;
+}
+
 // 策略元信息
 export interface StrategyMeta {
   id: StrategyId;
@@ -106,4 +143,4 @@ export interface StrategyMeta {
   suitable: string;
 }
 
-export type StrategyId = 'classic' | 'trend' | 'grid';
+export type StrategyId = 'trend' | 'regime' | 'goldFactor';

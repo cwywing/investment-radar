@@ -8,10 +8,21 @@ const HORIZON = 20; // 未来 20 个交易日的表现
 //
 // 思路(ChatGPT 重点建议):不直接说"买",而说"历史上类似信号 20 日内
 // 上涨概率 68%" —— 用证据建立信任。
-export function backtestSignal(asset: Asset, strategy: Strategy): BacktestResult | undefined {
+export function backtestSignal(asset: Asset, strategy: Strategy): BacktestResult {
   const candles = asset.candles;
   // 至少要留出 HORIZON + 60(策略最小数据量)的样本,否则无意义
-  if (candles.length < 60 + HORIZON + 10) return undefined;
+  // C4:数据不足不许静默返回 undefined(前端会以为"没这功能")。
+  // 返回明确"样本不足"对象,前端可据此渲染提示。
+  if (candles.length < 60 + HORIZON + 10) {
+    return {
+      matched: 0,
+      winRate: NaN,
+      avgReturn: NaN,
+      horizon: HORIZON,
+      note: '历史数据不足,无法回测',
+      sampleInsufficient: true,
+    };
+  }
 
   const closes = candles.map((c) => c.close);
 
