@@ -33,23 +33,33 @@ export function roundAdaptive(n: number): number {
 }
 
 export const STRATEGIES: Record<StrategyId, Strategy> = {
-  classic: null as unknown as Strategy,
   trend: null as unknown as Strategy,
-  grid: null as unknown as Strategy,
+  regime: null as unknown as Strategy,
+  goldFactor: null as unknown as Strategy,
 };
 
-import { classicStrategy } from './classic.js';
 import { trendStrategy } from './trend.js';
-import { gridStrategy } from './grid.js';
+import { regimeStrategy } from './regime.js';
+import { goldFactorStrategy } from './goldFactor.js';
 
-STRATEGIES.classic = classicStrategy;
-STRATEGIES.trend = trendStrategy;
-STRATEGIES.grid = gridStrategy;
+// 注意:strategy 模块会反向 import 本模块的 scoreToAction 等工具函数,
+// 形成 types <-> trend/regime/goldFactor 的循环依赖。若在顶层立即赋值
+// STRATEGIES.trend = trendStrategy,当本模块不是循环的"入口"时
+// (即别的模块先 import trend.ts),trendStrategy 尚在 TDZ 会被访问,
+// 抛 ReferenceError。因此把解析推迟到首次调用时——此时所有模块已完成初始化。
+function ensureLoaded(): void {
+  if (STRATEGIES.trend) return;
+  STRATEGIES.trend = trendStrategy;
+  STRATEGIES.regime = regimeStrategy;
+  STRATEGIES.goldFactor = goldFactorStrategy;
+}
 
 export function getStrategy(id: string): Strategy | undefined {
+  ensureLoaded();
   return STRATEGIES[id as StrategyId];
 }
 
 export function listStrategies(): StrategyMeta[] {
+  ensureLoaded();
   return Object.values(STRATEGIES).map((s) => s.meta);
 }

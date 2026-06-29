@@ -1,7 +1,12 @@
 import type { Asset, Signal } from '../types.js';
-import { ma, last, nthLast } from '../indicators/index.js';
+import { ma, last, nthLast, atr, supertrend } from '../indicators/index.js';
 import type { Strategy } from './types.js';
 import { scoreToAction, toConfidence, round1 } from './types.js';
+import { volatilityFilter } from './volFilter.js';
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
 
 // 趋势跟踪:均线多头/空头排列 + 价格相对 MA60 + 近 N 日新高/新低突破。
 // 信号较少但确定性高,适合牛市跟涨、熊市回避。
@@ -70,6 +75,34 @@ export const trendStrategy: Strategy = {
       score += clamp(chg * 120, -18, 18);
     }
 
+    // 5) Supertrend 确认(ATR 轨道趋势,黄金/期货常用)
+    const st = supertrend(c.map((x) => x.high), c.map((x) => x.low), closes, 10, 3);
+    const stDir = last(st.dir);
+    const stVal = last(st.value);
+    if (!isNaN(stDir)) {
+      if (stDir === 1) { score += 15; reasons.push('Supertrend 多头(价格在 ATR 轨道上方)'); }
+      else { score -= 15; reasons.push('Supertrend 空头(价格在 ATR 轨道下方)'); }
+    }
+
+    // 6) ATR 波动率过滤:极端波动不出信号,高波动降置信
+    const atrV = last(atr(c.map((x) => x.high), c.map((x) => x.low), closes, 14));
+    const vf = volatilityFilter(price, atrV);
+    if (vf.level === 'extreme') {
+      reasons.push(`⚠ 极端波动(ATR/价 ${round1(vf.atrPct)}%),不出信号`);
+      return {
+        action: 'hold',
+        score: 0,
+        confidence: 0,
+        reasons,
+        dimensions: { trend: 0, valuation: 0, risk: 0 },
+        indicators: {
+          价格: price, MA5: round1(ma5v), MA20: round1(ma20v), MA60: round1(ma60v),
+          距MA60: round1(((price - ma60v) / ma60v) * 100) + '%', ATR_pct: round1(vf.atrPct) + '%',
+        },
+      };
+    }
+    if (vf.level === 'high') reasons.push(`高波动(ATR/价 ${round1(vf.atrPct)}%),置信打折`);
+
     score = clamp(score, -100, 100);
     if (reasons.length === 0) reasons.push('趋势信号不明朗,建议观望');
 
@@ -83,7 +116,7 @@ export const trendStrategy: Strategy = {
     return {
       action: scoreToAction(score),
       score: round1(score),
-      confidence: toConfidence(score),
+      confidence: round1(toConfidence(score) * vf.factor * 100) / 100,
       reasons,
       dimensions: {
         trend: score,
@@ -96,14 +129,12 @@ export const trendStrategy: Strategy = {
         MA20: round1(ma20v),
         MA60: round1(ma60v),
         距MA60: round1(dev60 * 100) + '%',
+        Supertrend: !isNaN(stVal) ? round1(stVal) : '—',
+        ATR_pct: round1(vf.atrPct) + '%',
       },
     };
   },
 };
-
-function clamp(n: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, n));
-}
 
 function emptySignal(): Signal {
   return {
