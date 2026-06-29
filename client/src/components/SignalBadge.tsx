@@ -6,6 +6,20 @@ const LABEL: Record<SignalAction, string> = {
   hold: '观望',
 };
 
-export function SignalBadge({ action }: { action: SignalAction }) {
-  return <span className={`badge ${action}`}>{LABEL[action]}</span>;
+interface Props {
+  action: SignalAction;
+  score?: number; // 可选:带分数显示,如"买入 +62",列表页一目了然不用点进去
+}
+
+export function SignalBadge({ action, score }: Props) {
+  const scoreStr =
+    score != null && Number.isFinite(score)
+      ? ` ${score >= 0 ? '+' : ''}${Math.round(score)}`
+      : '';
+  return (
+    <span className={`badge ${action}`}>
+      {LABEL[action]}
+      {scoreStr}
+    </span>
+  );
 }

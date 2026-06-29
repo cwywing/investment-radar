@@ -2,6 +2,10 @@ import type {
   AssetRadarResponse,
   AssetDetailResponse,
   StrategyListResponse,
+  StrategyOverviewResponse,
+  NewsItem,
+  GoldDrivers,
+  GoldIntraday,
 } from '../types';
 
 const BASE = '/api';
@@ -26,4 +30,20 @@ export function fetchAssetDetail(id: string, strategy: string, days = 250) {
 
 export function fetchStrategies() {
   return getJSON<StrategyListResponse>(`${BASE}/strategies`);
+}
+
+export function fetchStrategiesOverview(id: string) {
+  return getJSON<StrategyOverviewResponse>(`${BASE}/assets/${id}/overview`);
+}
+
+export function fetchAssetNews(id: string) {
+  return getJSON<{ assetId: string; count: number; items: NewsItem[] }>(`${BASE}/news/${id}`);
+}
+
+export function fetchGoldDrivers() {
+  return getJSON<{ drivers: GoldDrivers }>(`${BASE}/gold/drivers`);
+}
+
+export function fetchGoldIntraday() {
+  return getJSON<{ intraday: GoldIntraday }>(`${BASE}/gold/intraday`);
 }

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AssetRadarItem } from '../types';
+import type { ThemeColors } from '../theme';
 
 interface Props {
   items: AssetRadarItem[];
   activeId: string | null;
   onSelect: (id: string) => void;
+  colors: ThemeColors;
 }
 
 const SIZE = 520;
@@ -29,7 +31,7 @@ function position(item: AssetRadarItem, index: number, total: number) {
   };
 }
 
-export function Radar({ items, activeId, onSelect }: Props) {
+export function Radar({ items, activeId, onSelect, colors }: Props) {
   const [sweepAngle, setSweepAngle] = useState(0);
   const rafRef = useRef<number | null>(null);
 
@@ -63,12 +65,12 @@ export function Radar({ items, activeId, onSelect }: Props) {
       <defs>
         {/* 扫描扇形渐变 */}
         <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stopColor="#2dd4bf" stopOpacity="0" />
-          <stop offset="100%" stopColor="#2dd4bf" stopOpacity="0.35" />
+          <stop offset="0%" stopColor={colors.accent} stopOpacity="0" />
+          <stop offset="100%" stopColor={colors.accent} stopOpacity="0.35" />
         </linearGradient>
         <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#0a1628" stopOpacity="1" />
-          <stop offset="100%" stopColor="#050b14" stopOpacity="1" />
+          <stop offset="0%" stopColor={colors.bgPanel} stopOpacity="1" />
+          <stop offset="100%" stopColor={colors.bg} stopOpacity="1" />
         </radialGradient>
         <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur stdDeviation="3" result="blur" />
@@ -90,15 +92,15 @@ export function Radar({ items, activeId, onSelect }: Props) {
           cy={CENTER}
           r={((CENTER - 40) / RINGS) * (i + 1)}
           fill="none"
-          stroke="#1b3050"
+          stroke={colors.border}
           strokeWidth="1"
           opacity={0.7}
         />
       ))}
 
       {/* 十字基准线 */}
-      <line x1={CENTER} y1={12} x2={CENTER} y2={SIZE - 12} stroke="#1b3050" strokeWidth="1" opacity={0.5} />
-      <line x1={12} y1={CENTER} x2={SIZE - 12} y2={CENTER} stroke="#1b3050" strokeWidth="1" opacity={0.5} />
+      <line x1={CENTER} y1={12} x2={CENTER} y2={SIZE - 12} stroke={colors.border} strokeWidth="1" opacity={0.5} />
+      <line x1={12} y1={CENTER} x2={SIZE - 12} y2={CENTER} stroke={colors.border} strokeWidth="1" opacity={0.5} />
 
       {/* 扫描扇形 */}
       <g transform={`rotate(${sweepAngle} ${CENTER} ${CENTER})`}>
@@ -108,7 +110,7 @@ export function Radar({ items, activeId, onSelect }: Props) {
           } ${CENTER - Math.cos((40 * Math.PI) / 180) * (CENTER - 12)} Z`}
           fill="url(#sweep)"
         />
-        <line x1={CENTER} y1={CENTER} x2={CENTER} y2={12} stroke="#2dd4bf" strokeWidth="1.5" opacity="0.8" />
+        <line x1={CENTER} y1={CENTER} x2={CENTER} y2={12} stroke={colors.accent} strokeWidth="1.5" opacity="0.8" />
       </g>
 
       {/* 资产光点 */}
@@ -146,7 +148,7 @@ export function Radar({ items, activeId, onSelect }: Props) {
               <text
                 x={x}
                 y={y - r - 8}
-                fill="#e2e8f0"
+                fill={colors.text}
                 fontSize="11"
                 textAnchor="middle"
                 style={{ pointerEvents: 'none' }}
@@ -159,7 +161,7 @@ export function Radar({ items, activeId, onSelect }: Props) {
       })}
 
       {/* 中心点 */}
-      <circle cx={CENTER} cy={CENTER} r="3" fill="#2dd4bf" />
+      <circle cx={CENTER} cy={CENTER} r="3" fill={colors.accent} />
     </svg>
   );
 }
