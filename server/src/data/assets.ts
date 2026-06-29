@@ -19,6 +19,8 @@ export interface AssetConfig {
   basePrice: number;
   drift: number;
   volatility: number;
+  // 背景动态搜索关键词(东方财富新闻搜索,多词合并去重,只展示不进分数)
+  newsKeywords?: string[];
 }
 
 // 标的清单。真实标的已用东方财富/天天基金接口验证(2026-06-29)。
@@ -35,6 +37,7 @@ export const ASSET_CONFIGS: AssetConfig[] = [
     source: 'eastmoney_gold',
     secid: '118.au9999',
     seed: 606, basePrice: 560, drift: 0.08, volatility: 0.14,
+    newsKeywords: ['黄金', '金价', '黄金ETF'],
   },
   {
     id: 'ag9999',
@@ -44,6 +47,7 @@ export const ASSET_CONFIGS: AssetConfig[] = [
     source: 'eastmoney_gold',
     secid: '118.ag9999',
     seed: 707, basePrice: 7.2, drift: 0.06, volatility: 0.26,
+    newsKeywords: ['白银', '白银价格'],
   },
   {
     id: 'pt9995',
@@ -53,6 +57,7 @@ export const ASSET_CONFIGS: AssetConfig[] = [
     source: 'eastmoney_gold',
     secid: '118.pt9995',
     seed: 808, basePrice: 230, drift: -0.01, volatility: 0.22,
+    newsKeywords: ['铂金'],
   },
   // ===== 公募基金(天天基金净值接口) =====
   {
@@ -63,6 +68,7 @@ export const ASSET_CONFIGS: AssetConfig[] = [
     source: 'eastmoney_fund',
     fundCode: '110020',
     seed: 101, basePrice: 1.85, drift: 0.04, volatility: 0.16,
+    newsKeywords: ['沪深300', '沪深300指数'],
   },
   {
     id: 'fund-tech',
@@ -72,6 +78,7 @@ export const ASSET_CONFIGS: AssetConfig[] = [
     source: 'eastmoney_fund',
     fundCode: '008888',
     seed: 202, basePrice: 1.2, drift: 0.1, volatility: 0.28,
+    newsKeywords: ['半导体', '芯片', '芯片ETF'],
   },
   {
     id: 'fund-consume',
@@ -81,6 +88,7 @@ export const ASSET_CONFIGS: AssetConfig[] = [
     source: 'eastmoney_fund',
     fundCode: '110022',
     seed: 303, basePrice: 2.65, drift: 0.02, volatility: 0.2,
+    newsKeywords: ['消费基金', '消费板块'],
   },
   {
     id: 'fund-bond',
@@ -90,6 +98,7 @@ export const ASSET_CONFIGS: AssetConfig[] = [
     source: 'eastmoney_fund',
     fundCode: '110007',
     seed: 404, basePrice: 1.08, drift: 0.03, volatility: 0.04,
+    newsKeywords: ['债券基金', '债市'],
   },
   {
     id: 'fund-gold',
@@ -99,6 +108,7 @@ export const ASSET_CONFIGS: AssetConfig[] = [
     source: 'eastmoney_fund',
     fundCode: '002610',
     seed: 505, basePrice: 1.45, drift: 0.08, volatility: 0.14,
+    newsKeywords: ['黄金ETF', '金价'],
   },
 ];
 
