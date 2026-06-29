@@ -39,6 +39,9 @@ coverage/
 server/data/csv/*
 !server/data/csv/example-fund.csv
 
+# Runtime 通知状态(每次运行生成,不提交)
+server/data/signal-state.json
+
 # Cache
 .cache/
 *.local
