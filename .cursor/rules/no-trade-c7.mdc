@@ -1,0 +1,35 @@
+---
+description: C7 硬约束——代码库永不出现交易/下单调用路径，每次会话默认加载
+alwaysApply: true
+globs:
+tags: [C7, no-trade, hard-constraint, architecture-boundary]
+constraints: [C7]
+related: [.cursor/rules/project-overview.mdc, docs/reality.md, server/src/test/contracts.test.ts]
+---
+
+<!-- AGENT_HEADER
+@file .cursor/rules/no-trade-c7.mdc
+@role cursor-rule (alwaysApply=true)
+@constraints C7
+@keywords no-trade, no-order, no-broker, C7, never-place-order, static-scan
+@updated 2026-06-29
+-->
+
+# C7：工具 NEVER 下单
+
+**架构层面强制**：代码库中 NEVER 出现任何指向券商 / 交易 / 下单接口的调用路径。通知只含只读信息。
+
+## 守卫
+
+- `server/src/test/contracts.test.ts` 中的 `e10` 静态扫描全代码库，搜索交易/下单相关调用（`下单|trade|order|buy.*api|sell.*api` 等交易语义），要求 **0 命中**。
+- 该测试是 `npm test` 的一部分，默认 CI 即守。
+
+## 写代码时的红线
+
+- NEVER 新增任何 HTTP/SDK 调用指向券商、交易平台、模拟下单接口。
+- 通知内容（`src/notifiers/*`）MUST 只描述信号与历史胜率，MUST NOT 含任何"已执行下单"语义。
+- 即使用户要求"加个自动下单功能"——MUST 拒绝，并提示这是 C7 永久边界。MUST 先在 `docs/reality.md` 更新边界讨论，再考虑动手。
+
+## 违反即严重 bug
+
+任何 PR 让 `e10` 变红 = 阻断，MUST 立即移除该调用路径。NEVER 接受"只是测试代码"之类的豁免。

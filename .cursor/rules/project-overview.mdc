@@ -1,0 +1,66 @@
+---
+description: 项目总览 + 7 条 must-hold 约束（C1–C7），每次会话默认加载
+alwaysApply: true
+globs:
+tags: [project-overview, must-hold, C1, C2, C3, C4, C5, C6, C7, investment-radar]
+constraints: [C1, C2, C3, C4, C5, C6, C7]
+related: [AGENT_INDEX.md, CLAUDE.md, AGENTS.md, docs/reality.md, eval/cases.md, .cursor/rules/harness-discipline.mdc, .cursor/rules/no-trade-c7.mdc]
+---
+
+<!-- AGENT_HEADER
+@file .cursor/rules/project-overview.mdc
+@role cursor-rule (alwaysApply=true)
+@constraints C1,C2,C3,C4,C5,C6,C7
+@keywords investment-radar, must-hold, simulated-data, signal-determinism, no-trade
+@updated 2026-06-29
+-->
+
+# Investment Radar — 项目总览
+
+替个人投资者把"盯盘 + 凭感觉判断买卖"变成"看雷达图 + 收信号推送"。覆盖国内公募基金与 999 黄金。**工具 NEVER 替用户下单**，只产出 buy/sell/hold + 历史胜率证据，最终决策留给人。非 LLM 应用。
+
+Monorepo（npm workspaces）：`server/`（Express + TS + node:test + ESM）、`client/`（React 18 + Vite + ECharts + Vitest）。项目宪法在 `docs/reality.md`，eval case 在 `eval/cases.md`，文档地图在 `AGENT_INDEX.md`。
+
+## Must-hold 约束（C1–C7）—— NEVER 违反
+
+### C1 — 模拟数据可见性
+
+模拟数据 MUST NOT 被当成真实信号展示，用户 MUST 能分辨。
+落地：`/api/datasources` 暴露 `loaded`；前端对 `loaded=simulated` 标红；回测模拟数据单独标注不计入结论。
+
+### C2 — 数据新鲜度
+
+基金最新 K 线日期 MUST NOT 滞后超过 1 个交易日。
+落地：dataProvider 拉取后校验 `lastCandle.date`，过期视为失败、走回退并 warn。
+
+### C3 — 信号确定性
+
+同一份 K 线 + 同一策略，分数 MUST 恒等。
+落地：策略纯函数 + golden snapshot 回归测试。
+
+### C4 — 回测不静默丢失
+
+数据不足 MUST 明说，NEVER 返回 undefined。
+落地：返回 `{matched:0, sampleInsufficient:true, note:...}`，签名收窄为 `BacktestResult`。
+
+### C5 — 通知不打扰
+
+hold MUST NOT 推；同档位 24h 内 MUST NOT 重推；重启后 MUST NOT 重推已发信号。
+落地：notify 状态比对 + 防抖窗口 + `signal-state.json` 落盘。
+
+### C6 — 通道失败不崩
+
+任一通知通道失败 MUST NOT 影响主流程。
+落地：CompositeNotifier 逐通道 try/catch，失败只 warn。
+
+### C7 — 工具不下单
+
+代码库 NEVER 出现交易/下单调用路径。详见 `.cursor/rules/no-trade-c7.mdc`。
+
+---
+
+**违反任一 = 严重 bug，MUST 立即修。** 改动前 MUST 自检：这条改法会不会让哪条 C 失守？
+
+## 边界（NEVER 主动做）
+
+auth、多用户、自动下单（C7 永不实现）、多 agent、数据源并列冗余——后续或永久不做。触及前 MUST 先在 `docs/reality.md` 更新边界。

@@ -1,0 +1,40 @@
+---
+description: Maker-Checker / earned-by-failure / eval-first 纪律，每次会话默认加载
+alwaysApply: true
+globs:
+tags: [harness-first, maker-checker, eval-first, earned-by-failure, discipline]
+constraints: []
+related: [docs/reality.md, eval/cases.md, AGENT_INDEX.md]
+---
+
+<!-- AGENT_HEADER
+@file .cursor/rules/harness-discipline.mdc
+@role cursor-rule (alwaysApply=true)
+@keywords maker-checker, eval-first, earned-by-failure, npm-test, npm-build, ground-truth
+@updated 2026-06-29
+-->
+
+# Harness-first 纪律
+
+项目用 harness-first 五阶段方法论搭骨架（详见 `docs/reality.md` Phase 0–4），现已全部通过。后续功能开发 MUST 遵守。
+
+## Maker-Checker
+
+- **Maker**：写改动。
+- **Checker**：宣称完成前 MUST 先跑 `npm test` + `npm run build`，读失败输出再调下一次。**"成功但没跑 Checker" = 没完成。**
+- 同一失败持续 2–3 次先走归因表：
+  - 稳定具体失败 → 修 harness / 契约
+  - 失败漂移 → 收紧 spec 或缩小步
+  - "成功但无 Checker" → 先补 Checker
+
+## earned-by-failure
+
+每加新组件 MUST 回答"哪个观察到的失败逼出了它"。Phase 2 的规则永不过期——NEVER 为不存在的组件写永远红着的测试。
+
+## eval-first
+
+先写"怎么知道它对"（把 `eval/cases.md` 的 case 接成可跑测试），机制自然被逼出来。参考 `eval/cases.md` 的"待接入"表：实现对应模块时 MUST 同步落 case，保持 `npm test` 持续绿。
+
+## 联网 case 隔离
+
+联网 case（`e11/e12` 及未来新增）单独归类 `npm run test:live -w server`，MUST NOT 进默认 `npm test`。离线 case 用固定 fixture（`fixedCandles` LCG），MUST NOT 读真实 CSV、MUST NOT 依赖外部接口。

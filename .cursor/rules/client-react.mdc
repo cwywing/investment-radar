@@ -1,0 +1,58 @@
+---
+description: client/ 前端 React + Vite + ECharts + Vitest 约定
+globs: client/src/**/*.{ts,tsx,css}
+alwaysApply: false
+tags: [client, react, vite, echarts, vitest, frontend]
+constraints: [C1]
+related: [.cursor/rules/project-overview.mdc, docs/reality.md]
+---
+
+<!-- AGENT_HEADER
+@file .cursor/rules/client-react.mdc
+@role cursor-rule (globs: client/src/**/*.{ts,tsx,css})
+@constraints C1
+@keywords react, hooks, echarts, dispose, simulated-badge, vitest, dom-assert
+@updated 2026-06-29
+-->
+
+# Client 约定（React 18 + Vite + ECharts + Vitest）
+
+适用 `client/src/**/*.{ts,tsx,css}`。
+
+## 组件
+
+- 函数组件 + hooks，NEVER 写 class 组件。
+- 可复用逻辑提取 custom hook，与组件 colocate。
+- 样式与组件 colocate（`styles.css` 共享或组件级 css），NEVER 引入全局 UI 框架。
+- NEVER 引入状态管理库（当前规模不需要），跨组件状态用 props/context。
+
+## ECharts（雷达图核心）
+
+- ECharts 实例在 `useEffect` 里创建，组件卸载时 MUST `chart.dispose()` 防泄漏。
+- 配置对象用 `useMemo` 缓存，MUST NOT 每次 render 重建大对象。
+- 主题色 MUST 统一从 `client/src/theme.ts` 取，MUST NOT 散落硬编码。
+
+## C1 落地（前端最重要的一条）
+
+- 调 `/api/datasources`，对 `loaded=simulated` 的资产 MUST 显著标红（红边框/红角标/红色"模拟"徽章），让用户一眼分辨这是离线兜底不是真实信号。
+- MUST NOT 为了让界面"好看"而弱化标红——这是 must-hold C1 的前端 mechanism，弱化 = 违反 C1。
+
+## 类型
+
+- 共享类型 MUST 从 `client/src/types.ts` 导入，与 server 端契约保持一致。server 加字段时 MUST 同步更新这里。
+- 信号类型 `buy|sell|hold` 与 server 阈值常量一致（±30），MUST NOT 在前端重新定义阈值。
+
+## 测试
+
+- Vitest + @testing-library/react，文件放 `client/src/test/*.test.tsx`，`vitest run` 跑。
+- MUST 断言 DOM 而非实现细节（用 role/text/query）。
+- ECharts 渲染的 DOM 断言用 canvas 外的容器即可，MUST NOT 深测 chart 内部。
+
+## 错误处理
+
+- API 调用失败的 UI fallback MUST 可见（loading/error 状态），MUST NOT 静默吞错。
+- NEVER 空 `catch {}`，MUST 至少 `console.error` 并设置 error state。
+
+## 提交前
+
+`npm test -w client`（`vitest run`）+ `npm run build -w client`（`tsc -b && vite build`）两道 MUST 绿。

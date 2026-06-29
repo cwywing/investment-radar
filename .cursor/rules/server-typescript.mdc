@@ -1,0 +1,62 @@
+---
+description: server/ 后端 TypeScript / ESM / Express / node:test 约定
+globs: server/**/*.ts
+alwaysApply: false
+tags: [server, typescript, esm, express, node-test, pure-function, data-fallback]
+constraints: [C1, C2, C3, C4, C5, C6, C7]
+related: [.cursor/rules/project-overview.mdc, .cursor/rules/no-trade-c7.mdc, docs/reality.md]
+---
+
+<!-- AGENT_HEADER
+@file .cursor/rules/server-typescript.mdc
+@role cursor-rule (globs: server/**/*.ts)
+@constraints C1,C2,C3,C4,C5,C6,C7
+@keywords esm, pure-function, tdz, circular-deps, backtest, notifier, dataProvider, simulated
+@updated 2026-06-29
+-->
+
+# Server 约定（Express + TS + ESM + node:test）
+
+适用 `server/**/*.ts`。
+
+## ESM 与依赖
+
+- `"type": "module"`，`import` MUST 带扩展名或走 bundler 解析；tsx dev 容错，`tsc` 构建严格。
+- MUST 避免顶层急切赋值造成循环依赖 TDZ：已踩过坑（`strategies/types.ts` 顶层 `STRATEGIES.classic = classicStrategy` 与 `classic.ts` 反向 import 形成 ReferenceError）。模式：用 `ensureLoaded()` 在首次调用时懒解析，NEVER 在模块顶层急切绑定跨文件对象。
+- 新增 provider/strategy/notifier 时 MUST 先想：会不会和现有模块形成循环？
+
+## 纯函数要求（C3）
+
+- `src/indicators/*` 与 `src/strategies/*` MUST 纯函数——同一份 K 线输入，分数/动作/理由 MUST 恒等。
+- NEVER 在指标/策略里读外部状态、调 `Date.now()`、`Math.random()`。随机性 ONLY 允许在 `simulator.ts` 这种明确标注的离线兜底里。
+
+## 数据回退链（C1/C2）
+
+- dataProvider 走多源回退：真实源失败 → 下一源 → 最终 simulator 兜底。
+- 兜底 MUST NOT 当正常路径：模拟数据 MUST 让用户看得见（C1）。`usedProvider` 字段一路传到 `/api/datasources`，前端据此标红。
+- 拉取后 MUST 校验 `lastCandle.date` 新鲜度（C2），过期视为失败、走回退并 warn，NEVER 直接返回旧缓存。
+
+## 回测（C4）
+
+- `backtestSignal` 数据不足分支 MUST 返回 `{matched:0, sampleInsufficient:true, note:'历史数据不足,无法回测'}`，NEVER 返回 undefined，签名收窄为 `BacktestResult`。
+- 模拟数据资产的回测结果 note MUST 含"模拟数据"标注，且 MUST NOT 计入全局胜率结论（C1 的回测侧）。
+
+## 通知（C5/C6）
+
+- `CompositeNotifier` MUST 逐通道 try/catch，单通道失败只 warn，MUST NOT 让调度/扫描中断（C6）。
+- 通知防抖（C5）：hold MUST NOT 推；同档位 24h 内 MUST NOT 重推；进程重启后 MUST 从 `signal-state.json` 恢复状态、MUST NOT 重推已发信号。
+
+## 测试
+
+- `node --import tsx --test`，文件放 `src/test/*.test.ts`。
+- 离线 case 用 `fixedCandles` LCG 自造 K 线，MUST NOT 读 `server/data/csv/*`、MUST NOT 打外部接口。
+- 联网 case 放 `src/test/live/*.test.ts`，ONLY 在 `npm run test:live` 跑，MUST NOT 进默认 `npm test`。
+
+## 错误处理
+
+- NEVER 空 `catch {}`。`catch` 内 MUST `logger.warn/error` 并按需 throw typed error。
+- 数据拉取失败、通道失败这类"软失败"用 warn + 走回退，MUST NOT 让主流程抛错中断。
+
+## 提交前
+
+`npm test` + `npm run build`（`tsc -p tsconfig.json`）两道 MUST 绿。
