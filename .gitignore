@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Vite
+.vite/
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# User-imported CSV data (keep example only)
+server/data/csv/*
+!server/data/csv/example-fund.csv
+
+# Cache
+.cache/
+*.local
