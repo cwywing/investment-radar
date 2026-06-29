@@ -1,0 +1,152 @@
+import type { Candle } from '../types.js';
+
+// 黄金多因子历史数据(ChatGPT/Gemini 核心建议的"黄金定价拆解"驱动因子)。
+//
+// Au99.99 ≈ XAU/USD × USD/CNH + 国内溢价
+//   - 国际金价 XAU/USD(新浪国际期货日线,2006 起)
+//   - 汇率 USD/CNH(东方财富 133.USDCNH 日线,2010 起)
+//   - 美元指数 DXY(东方财富 100.UDI 日线,2010 起)—— 国际背景,与 XAU 负相关
+//   - 国内溢价 = au_close - xau*cnh/31.1035(人民币/克)—— 国内供需强弱
+//
+// 这些因子现已进入 goldFactor 策略评分(不再是"背景参考")。
+// 全部为客观数值 + 历史序列,可回测,不破坏 C3(确定性)/C4(可回测)。
+// LLM 情绪/事件日历等模糊判断仍不进分数(无法回测)。
+
+export interface FactorDaily {
+  date: string; // YYYY-MM-DD
+  close: number;
+}
+
+// 1 盎司 = 31.1035 克。XAU 报价是美元/盎司,乘以 USD/CNH 再除以 31.1035
+// 得到人民币/克的隐含金价,与 au9999(人民币/克)同口径,差值即国内溢价。
+const GRAM_PER_OUNCE = 31.1035;
+
+// —— 纯函数:把三条因子序列前向填充对齐到 au9999 的每个交易日 ——
+// 前向填充:au 交易日 D 用"不超过 D 的最近一个因子交易日"的收盘值。
+// 这样周末/假期错位不会漏值,且只用历史(无未来泄漏,回测安全)。
+export function alignFactors(
+  candles: Candle[],
+  xau: FactorDaily[],
+  cnh: FactorDaily[],
+  dxy: FactorDaily[],
+): Candle[] {
+  const xauMap = sortByDate(xau);
+  const cnhMap = sortByDate(cnh);
+  const dxyMap = sortByDate(dxy);
+
+  return candles.map((c) => {
+    const x = floorValue(xauMap, c.date);
+    const h = floorValue(cnhMap, c.date);
+    const d = floorValue(dxyMap, c.date);
+    if (x == null || h == null) return c; // 缺国际金/汇率 → 无法算溢价,整根不加因子
+    const premium = c.close - (x * h) / GRAM_PER_OUNCE;
+    return { ...c, xau: x, cnh: h, dxy: d ?? undefined, premium };
+  });
+}
+
+function sortByDate(arr: FactorDaily[]): FactorDaily[] {
+  return arr.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+// 在按 date 升序的数组里找"不超过 target 的最后一个"收盘值(前向填充)。
+function floorValue(arr: FactorDaily[], target: string): number | null {
+  // 二分找右边界
+  let lo = 0, hi = arr.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid].date <= target) { ans = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return ans >= 0 ? arr[ans].close : null;
+}
+
+// —— 解析器(纯函数,便于测试) ——
+export function parseXauJsonp(text: string): FactorDaily[] {
+  const m = text.match(/var_[A-Za-z]+\((.*)\)/s);
+  if (!m) return [];
+  try {
+    const arr = JSON.parse(m[1]) as Array<{ date: string; close: string }>;
+    return arr
+      .map((x) => ({ date: x.date, close: Number(x.close) }))
+      .filter((x) => Number.isFinite(x.close) && x.close > 0);
+  } catch {
+    return [];
+  }
+}
+
+export function parseEmKlines(json: unknown): FactorDaily[] {
+  const klines = (json as { data?: { klines?: string[] } })?.data?.klines;
+  if (!Array.isArray(klines)) return [];
+  // 东财格式: "日期,开,收,高,低,量"
+  return klines
+    .map((line) => {
+      const [date, , close] = line.split(',');
+      return { date, close: Number(close) };
+    })
+    .filter((x) => Number.isFinite(x.close) && x.close > 0);
+}
+
+// —— 抓取(带 24h 缓存:日线数据日内不变) ——
+const DAY_MS = 24 * 3600 * 1000;
+interface Cached { ts: number; data: FactorDaily[]; }
+const cache = new Map<string, Cached>();
+
+async function fetchCached(key: string, fetcher: () => Promise<FactorDaily[]>): Promise<FactorDaily[]> {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.ts < DAY_MS) return hit.data;
+  const data = await fetcher();
+  if (data.length > 0) cache.set(key, { ts: Date.now(), data });
+  return data;
+}
+
+const UA = { 'User-Agent': 'Mozilla/5.0 (radar-server)', Referer: 'https://finance.sina.com.cn' };
+
+export async function fetchXauDaily(): Promise<FactorDaily[]> {
+  return fetchCached('xau', async () => {
+    const url = 'https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var_XAU/GlobalFuturesService.getGlobalFuturesDailyKLine?symbol=XAU&_=';
+    const res = await fetch(url, { headers: UA });
+    if (!res.ok) return [];
+    const text = await res.text();
+    return parseXauJsonp(text);
+  });
+}
+
+export async function fetchCnhDaily(): Promise<FactorDaily[]> {
+  return fetchCached('cnh', async () => {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const url =
+      'https://push2his.eastmoney.com/api/qt/stock/kline/get'
+      + '?secid=133.USDCNH&klt=101&fqt=0&beg=20100101&end=' + today
+      + '&lmt=5000&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56'
+      + '&ut=fa5fd1943c7b386f172d6893dbbd1';
+    const res = await fetch(url, { headers: { 'User-Agent': UA['User-Agent'] } });
+    if (!res.ok) return [];
+    return parseEmKlines(await res.json());
+  });
+}
+
+export async function fetchDxyDaily(): Promise<FactorDaily[]> {
+  return fetchCached('dxy', async () => {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const url =
+      'https://push2his.eastmoney.com/api/qt/stock/kline/get'
+      + '?secid=100.UDI&klt=101&fqt=0&beg=20100101&end=' + today
+      + '&lmt=5000&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56'
+      + '&ut=fa5fd1943c7b386f172d6893dbbd1';
+    const res = await fetch(url, { headers: { 'User-Agent': UA['User-Agent'] } });
+    if (!res.ok) return [];
+    return parseEmKlines(await res.json());
+  });
+}
+
+// best-effort:把 au9999 日线 enrichment 上因子。任一源失败则原样返回
+// (goldFactor 策略检测到因子缺失会自动回退纯 grid 逻辑,不影响可用性)。
+export async function enrichGoldCandles(candles: Candle[]): Promise<Candle[]> {
+  try {
+    const [xau, cnh, dxy] = await Promise.all([fetchXauDaily(), fetchCnhDaily(), fetchDxyDaily()]);
+    if (xau.length === 0 || cnh.length === 0) return candles;
+    return alignFactors(candles, xau, cnh, dxy);
+  } catch {
+    return candles;
+  }
+}
