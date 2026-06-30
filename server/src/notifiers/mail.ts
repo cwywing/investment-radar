@@ -37,6 +37,7 @@ export class MailNotifier implements Notifier {
       `${n.name} ${n.actionText}\n` +
       `综合分数:${n.score > 0 ? '+' : ''}${n.score}\n` +
       `当前价:${n.price}(${n.changePct >= 0 ? '+' : ''}${n.changePct}%)\n` +
+      (n.portfolioLine ? `${n.portfolioLine}\n` : '') +
       (n.intraday ? '注:基于盘中估值,未确认\n' : '') +
       `\n理由:\n${n.reasons.map((r) => '- ' + r).join('\n')}`;
     await this.transporter.sendMail({ from: this.from, to: this.to, subject, text });

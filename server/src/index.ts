@@ -4,6 +4,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { router } from './routes/assets.js';
+import { holdingsRouter } from './routes/holdings.js';
+import { openDatabase } from './db/database.js';
 import { warmUpAll } from './data/dataProvider.js';
 import { startScheduler } from './scheduler.js';
 import { configureNotifiers, configureStateFile } from './services/notify.js';
@@ -37,6 +39,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api', router);
+app.use('/api', holdingsRouter);
 
 app.listen(PORT, () => {
   console.log(`📡 投资雷达后端已启动: http://localhost:${PORT}/api`);
@@ -60,6 +63,13 @@ app.listen(PORT, () => {
   }
   configureNotifiers(notifiers);
   configureStateFile(join(__dirname, '../data', 'signal-state.json'));
+
+  try {
+    openDatabase(join(__dirname, '../data', 'radar.db'));
+    console.log('💾 持仓数据库已就绪: server/data/radar.db');
+  } catch (e) {
+    console.warn(`⚠ 持仓数据库初始化失败(持仓功能不可用): ${String((e as Error)?.message || e).slice(0, 80)}`);
+  }
 
   // 后台异步预热:从真实数据源加载(不阻塞启动,失败则回退模拟数据)
   console.log('⏳ 后台加载真实行情数据中(CSV > 东方财富/天天基金 > 模拟)...');

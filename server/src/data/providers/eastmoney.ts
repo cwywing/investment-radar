@@ -1,18 +1,25 @@
 import type { Candle, IntradaySnapshot } from '../../types.js';
+import { browserHeaders } from './_headers.js';
 
 // 东方财富 K线接口(贵金属/ETF/股票通用)。secid 形如 118.au9999。
 // 字段 f51..f56 = 日期,开,收,高,低,量; klt=101 日线。
+// 反爬:该接口(push2his)对 Node TLS 指纹(JA3)有严格拦截,拟人化 UA 也无法绕过,
+// 上层 dataProvider 会回退新浪 AU0 近似。headers 仍保持拟人化以备接口放宽时可用。
 const KLINE_URL = 'https://push2his.eastmoney.com/api/qt/stock/kline/get';
 
-export async function fetchGoldCandles(secid: string, days = 400): Promise<Candle[]> {
+export async function fetchGoldCandles(secid: string, days = 400, beg?: string): Promise<Candle[]> {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  // beg 非空时增量抓取(重抓 beg 当天 + 之后);否则全量。beg 格式 YYYY-MM-DD。
+  // 增量时 lmt 放大到 30,覆盖假期后首日补抓 + 最新一两日修正。
+  const begParam = beg ? beg.replace(/-/g, '') : '20180101';
+  const lmt = beg ? 30 : days;
   const url =
     `${KLINE_URL}?secid=${encodeURIComponent(secid)}`
     + `&fields1=f1&fields2=f51,f52,f53,f54,f55,f56`
-    + `&klt=101&fqt=0&beg=20180101&end=${today}&lmt=${days}`;
+    + `&klt=101&fqt=0&beg=${begParam}&end=${today}&lmt=${lmt}`;
 
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (radar-server)' },
+    headers: browserHeaders('https://quote.eastmoney.com/'),
   });
   if (!res.ok) throw new Error(`东方财富接口返回 ${res.status}`);
   const json: any = await res.json();
@@ -48,7 +55,7 @@ export async function fetchGoldQuote(secid: string): Promise<IntradaySnapshot | 
     `${QUOTE_URL}?secid=${encodeURIComponent(secid)}`
     + `&fields=f43,f170,f169,f57,f58&fltt=2`;
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (radar-server)' },
+    headers: browserHeaders('https://quote.eastmoney.com/'),
   });
   if (!res.ok) return null;
   const json: any = await res.json();

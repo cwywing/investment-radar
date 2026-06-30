@@ -374,6 +374,8 @@ button {
   font-size: 12px;
   color: var(--text-faint);
 }
+.panel-head-portfolio { padding: 16px 20px 14px; }
+.panel-head-portfolio h2 { font-size: 16px; font-weight: 700; }
 
 /* ---------- 雷达 ---------- */
 .radar-wrap {
@@ -439,6 +441,13 @@ button {
   background: rgba(239, 68, 68, 0.04);
 }
 .signal-row.simulated:hover { background: rgba(239, 68, 68, 0.08); }
+/* C1:近似数据源 —— 真实行情接口不可达,用走势高度相关的替代标的(如沪金期货主力近似 au9999)。
+   数据真实但非标的本身,橙色提示用户知晓基差/跟踪误差,区别于"模拟"(红色,纯几何布朗)。 */
+.signal-row.proxy {
+  border: 1px dashed rgba(234, 88, 12, 0.5);
+  background: rgba(234, 88, 12, 0.04);
+}
+.signal-row.proxy:hover { background: rgba(234, 88, 12, 0.08); }
 /* C2:数据过期 —— 真实数据但最新K线日期过旧,数据源可能异常 */
 .signal-row.stale {
   border: 1px dashed rgba(234, 179, 8, 0.55);
@@ -448,6 +457,17 @@ button {
   font-weight: 700;
   color: var(--sell);
   background: rgba(239, 68, 68, 0.15);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  letter-spacing: 0.3px;
+}
+/* C1:近似标签 —— 橙色,区别于模拟(红)与过期(黄) */
+.proxy-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgb(234, 88, 12);
+  background: rgba(234, 88, 12, 0.15);
   padding: 1px 6px;
   border-radius: 4px;
   margin-left: 6px;
@@ -862,3 +882,262 @@ button {
 .rel-tag.mid { background: rgba(234,179,8,0.15); color: var(--hold); }
 .rel-tag.bad { background: rgba(239,68,68,0.15); color: var(--sell); }
 .rel-tag.none { background: var(--card); color: var(--muted); }
+
+/* ---------- 我的持仓 ---------- */
+/* 区块间距分级:摘要紧凑、建议→操作→列表逐步留白,避免单一 gap 的平铺感 */
+.portfolio-panel { display: flex; flex-direction: column; gap: 16px; }
+.portfolio-panel > .portfolio-actions-bar { margin-top: 4px; }
+.portfolio-panel > .portfolio-list { margin-top: 6px; }
+
+/* 指标条:横向 4 指标,竖线分隔,无边框卡片,呼吸感更强 */
+.portfolio-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0;
+  padding: 14px 4px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.portfolio-metrics .metric {
+  flex: 1 1 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 2px 18px;
+  position: relative;
+}
+.portfolio-metrics .metric + .metric::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 4px; bottom: 4px;
+  width: 1px;
+  background: var(--border-soft);
+}
+.metric-label {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.metric-value {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+.metric-value.up { color: var(--buy); }
+.metric-value.down { color: var(--sell); }
+.metric-suffix {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+  margin-left: 6px;
+}
+.metric-duo { display: flex; flex-direction: column; gap: 2px; font-size: 13px; font-weight: 400; color: var(--text-dim); }
+.metric-duo b { color: var(--text); font-weight: 600; }
+.metric-dist { display: flex; gap: 12px; font-size: 14px; font-weight: 500; }
+.metric-dist .dist-buy { color: var(--buy); }
+.metric-dist .dist-hold { color: var(--hold); }
+.metric-dist .dist-sell { color: var(--sell); }
+
+.portfolio-advice {
+  background: linear-gradient(135deg, rgba(45,212,191,0.04), transparent 60%), var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.portfolio-advice h3 {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.portfolio-advice ul { padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text); line-height: 1.5; }
+.portfolio-advice .sub { margin-top: 10px; font-size: 11px; color: var(--text-faint); }
+
+/* 操作栏:录入/导入/历史 三个按钮,默认收起表单与导入区,点击弹窗 */
+.portfolio-actions-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.action-btn {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.action-btn:hover { background: var(--card); border-color: var(--accent); }
+.action-btn:active { transform: translateY(1px); }
+.action-btn.primary {
+  background: var(--accent);
+  color: #041018;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.action-btn.primary:hover { filter: brightness(1.08); }
+.action-btn.ghost { background: none; }
+.action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* 弹窗内的表单:纵向网格,每字段一行(不再挤在一行) */
+.portfolio-form { display: flex; flex-direction: column; gap: 14px; }
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.form-field { display: flex; flex-direction: column; gap: 4px; }
+.form-label { font-size: 11px; color: var(--text-dim); }
+.form-field select,
+.form-field input {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: 13px;
+}
+.form-field select:focus,
+.form-field input:focus { outline: none; border-color: var(--accent); }
+.form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+
+/* 历史展开区(就地折叠,非弹窗) */
+.portfolio-history-box {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.portfolio-import-body { margin: 12px 0; display: flex; flex-direction: column; gap: 8px; }
+.portfolio-import-body input[type="file"] { font-size: 12px; color: var(--text-dim); }
+
+/* 持仓行:三栏 grid,信号+权重 / 内容分层 / 操作 */
+.portfolio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px 14px;
+}
+.holding-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  cursor: default;
+  transition: background 0.15s, border-color 0.15s;
+}
+.holding-row:hover { background: var(--bg-elevated); border-color: var(--border-soft); }
+.holding-row.simulated {
+  border: 1px dashed rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.04);
+}
+.holding-row.simulated:hover { background: rgba(239, 68, 68, 0.08); }
+.holding-row.proxy {
+  border: 1px solid rgba(234, 88, 12, 0.35);
+  background: rgba(234, 88, 12, 0.04);
+}
+.holding-row.proxy:hover { background: rgba(234, 88, 12, 0.08); }
+
+.holding-signal {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.holding-weight {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+}
+
+.holding-body { display: flex; flex-direction: column; gap: 5px; min-width: 0; cursor: pointer; }
+.holding-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.holding-name { font-size: 15px; font-weight: 600; color: var(--text); }
+.holding-sym { font-size: 11px; color: var(--text-faint); letter-spacing: 0.3px; }
+.holding-stats { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.stat-chip {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: var(--bg-elevated);
+}
+.pnl-pill {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 5px;
+}
+.pnl-pill.pos { color: var(--buy); background: rgba(34, 197, 94, 0.12); }
+.pnl-pill.neg { color: var(--sell); background: rgba(239, 68, 68, 0.12); }
+.holding-reason {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.holding-actions { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  transition: background 0.12s;
+}
+.link-btn:hover { background: var(--bg-elevated); }
+.link-btn.danger { color: var(--sell); }
+.empty-hint { padding: 28px; text-align: center; color: var(--text-dim); font-size: 13px; }
+.portfolio-notify-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.5;
+  padding: 0 4px;
+  margin: -4px 0 0;
+}
+.history-toggle:hover { border-color: var(--accent); color: var(--accent); }
+.history-list {
+  list-style: none;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.history-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+}
+.history-time { color: var(--text-faint); }
+.history-action {
+  color: var(--accent);
+  font-weight: 600;
+}
+.history-source {
+  color: var(--text-dim);
+  font-size: 11px;
+}

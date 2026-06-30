@@ -71,7 +71,11 @@ export function startScheduler(intervalMs = 60_000): () => void {
       firedKeys.add(key('notify'));
       console.log(`⏰ [调度] ${now.toTimeString().slice(0, 5)} 通知检查`);
       // 不 await:调度 tick 不阻塞;失败内部已兜底
-      scanAndNotify().catch((e) => console.warn(`⚠ [通知] 扫描失败: ${String(e).slice(0, 80)}`));
+      scanAndNotify().then((r) => {
+        if (r.portfolioMode) {
+          console.log(`⏰ [调度] 组合通知模式:发送 ${r.sent} 条,跳过 ${r.skipped} 条`);
+        }
+      }).catch((e) => console.warn(`⚠ [通知] 扫描失败: ${String(e).slice(0, 80)}`));
     }
 
     if (firedKeys.size > 40) firedKeys.clear();

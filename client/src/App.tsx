@@ -10,6 +10,7 @@ import { StrategyCompareModal } from './components/StrategyCompareModal';
 import { Radar } from './components/Radar';
 import { AssetList } from './components/AssetList';
 import { AssetDetail as AssetDetailPanel } from './components/AssetDetail';
+import { PortfolioPanel } from './components/PortfolioPanel';
 import {
   type Theme,
   getStoredTheme,
@@ -17,7 +18,7 @@ import {
   getThemeColors,
 } from './theme';
 
-type ViewTab = 'gold' | 'fund';
+type ViewTab = 'gold' | 'fund' | 'portfolio';
 
 // 每个视图的默认策略依据回测审计证据(2026-06-29):
 //   金属 au9999 → goldFactor(确认版) 历史胜率 70% / 平均 +1.2%,优于 grid 的 62% / +0.7%。
@@ -29,6 +30,11 @@ type ViewTab = 'gold' | 'fund';
 // 两边策略独立,可随时在顶栏切换,后期加新策略只需注册到 STRATEGIES。
 const DEFAULT_GOLD_STRATEGY = 'goldFactor';
 const DEFAULT_FUND_STRATEGY = 'trend';
+const METAL_IDS = new Set(['au9999', 'ag9999', 'pt9995']);
+
+function strategyForAssetId(id: string, goldStrategy: string, fundStrategy: string): string {
+  return METAL_IDS.has(id) ? goldStrategy : fundStrategy;
+}
 
 export default function App() {
   const [strategies, setStrategies] = useState<StrategyMeta[]>([]);
@@ -44,9 +50,18 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
   const [showCompare, setShowCompare] = useState(false);
 
-  // 当前视图的策略(黄金/基金各自独立)
+  // 当前视图的策略(黄金/基金各自独立;持仓 Tab 用两者默认值)
   const strategy = tab === 'gold' ? goldStrategy : fundStrategy;
   const setStrategy = tab === 'gold' ? setGoldStrategy : setFundStrategy;
+
+  function openAssetFromPortfolio(id: string) {
+    setTab(METAL_IDS.has(id) ? 'gold' : 'fund');
+    setActiveId(id);
+  }
+
+  const detailStrategy = activeId
+    ? strategyForAssetId(activeId, goldStrategy, fundStrategy)
+    : strategy;
 
   // 应用主题到 <html> 并持久化
   useEffect(() => {
@@ -62,11 +77,12 @@ export default function App() {
       .catch(() => setStrategies([]));
   }, []);
 
-  // 资产列表随「当前视图策略」变化刷新(拉全量,前端按 tab 过滤)
+  // 资产列表随策略变化刷新(持仓 Tab 用 fund 策略拉全量作导航兜底)
   useEffect(() => {
     let cancelled = false;
     setListError(null);
-    fetchAssets(strategy)
+    const loadStrategy = tab === 'gold' ? goldStrategy : fundStrategy;
+    fetchAssets(loadStrategy)
       .then((r) => {
         if (!cancelled) setAllItems(r.items);
       })
@@ -76,16 +92,18 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [strategy]);
+  }, [tab, goldStrategy, fundStrategy]);
 
   // 当前视图展示的标的:黄金=仅 AU9999(对应银行积存金),基金=全部 fund 类
   const items = useMemo(() => {
     if (tab === 'gold') return allItems.filter((i) => i.id === 'au9999');
+    if (tab === 'portfolio') return [];
     return allItems.filter((i) => i.assetClass === 'fund');
   }, [allItems, tab]);
 
   // 切 tab 或列表刷新后,选定默认查看项:黄金固定 au9999;基金选信号最强那只
   useEffect(() => {
+    if (tab === 'portfolio') return;
     if (items.length === 0) {
       setActiveId(null);
       return;
@@ -104,7 +122,7 @@ export default function App() {
     let cancelled = false;
     setDetailLoading(true);
     setDetailError(null);
-    fetchAssetDetail(activeId, strategy)
+    fetchAssetDetail(activeId, detailStrategy)
       .then((r) => {
         if (!cancelled) setDetail(r.asset);
       })
@@ -117,9 +135,9 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeId, strategy]);
+  }, [activeId, detailStrategy]);
 
-  const activeMeta = strategies.find((s) => s.id === strategy);
+  const activeMeta = strategies.find((s) => s.id === detailStrategy);
   // 单资产(黄金)时雷达无意义,隐藏只留列表
   const showRadar = items.length > 1;
 
@@ -145,8 +163,16 @@ export default function App() {
           >
             📈 基金
           </button>
+          <button
+            className={`view-tab ${tab === 'portfolio' ? 'active' : ''}`}
+            onClick={() => setTab('portfolio')}
+          >
+            💼 我的持仓
+          </button>
         </div>
-        <StrategySwitcher strategies={strategies} active={strategy} onChange={setStrategy} />
+        {tab !== 'portfolio' && (
+          <StrategySwitcher strategies={strategies} active={strategy} onChange={setStrategy} />
+        )}
         <button
           className="compare-btn"
           onClick={() => setShowCompare(true)}
@@ -168,10 +194,20 @@ export default function App() {
       <main className="main">
         {/* 左:雷达 + 信号榜 */}
         <section className="panel">
-          <div className="panel-head">
-            <h2>{tab === 'gold' ? '🥇 黄金信号' : '📈 基金信号'}</h2>
-            <span className="sub">{activeMeta ? `${activeMeta.name}` : ''}</span>
+          <div className={`panel-head${tab === 'portfolio' ? ' panel-head-portfolio' : ''}`}>
+            <h2>{tab === 'portfolio' ? '💼 我的持仓' : tab === 'gold' ? '🥇 黄金信号' : '📈 基金信号'}</h2>
+            <span className="sub">
+              {tab === 'portfolio' ? '录入持仓 · 组合建议' : activeMeta ? `${activeMeta.name}` : ''}
+            </span>
           </div>
+          {tab === 'portfolio' ? (
+            <PortfolioPanel
+              fundStrategy={fundStrategy}
+              goldStrategy={goldStrategy}
+              onSelectAsset={openAssetFromPortfolio}
+            />
+          ) : (
+            <>
           {showRadar && (
             <div className="radar-wrap">
               {listError ? (
@@ -190,6 +226,8 @@ export default function App() {
           )}
           {!showRadar && listError && <div className="error-box">{listError}</div>}
           <AssetList items={items} activeId={activeId} onSelect={setActiveId} />
+            </>
+          )}
         </section>
 
         {/* 右:策略说明 + 详情 */}

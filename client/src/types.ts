@@ -64,6 +64,7 @@ export interface AssetRadarItem {
   stale: boolean;
   intraday?: IntradaySnapshot;
   lowConfidence?: boolean; // C3:历史回测胜率<50% 且样本>=10,前端标灰警示
+  proxyNote?: string;      // C1:近似数据源说明(如"沪金期货主力近似"),前端标橙
 }
 
 export interface AssetRadarResponse {
@@ -166,4 +167,82 @@ export interface StrategyOverviewRow {
 export interface StrategyOverviewResponse {
   asset: { id: string; name: string; symbol: string };
   rows: StrategyOverviewRow[];
+}
+
+export interface AssetOption {
+  id: string;
+  name: string;
+  symbol: string;
+  assetClass: AssetClass;
+}
+
+export interface HoldingRecord {
+  assetId: string;
+  accountKey: string;
+  accountLabel: string | null;
+  shares: number;
+  costPrice: number | null;
+  note: string | null;
+  updatedAt: string;
+}
+
+export type HoldingHistoryAction = 'upsert' | 'delete' | 'import';
+export type HoldingSource = 'manual' | 'csv' | 'api';
+
+export interface HoldingHistoryRecord {
+  id: number;
+  assetId: string;
+  accountKey: string;
+  action: HoldingHistoryAction;
+  sharesBefore: number | null;
+  sharesAfter: number | null;
+  costPrice: number | null;
+  note: string | null;
+  source: HoldingSource;
+  createdAt: string;
+}
+
+export interface HoldingsImportResult {
+  imported: number;
+  skipped: number;
+  errors: string[];
+  holdings: HoldingRecord[];
+}
+
+export interface PortfolioItem {
+  holdingKey: string;
+  assetId: string;
+  accountKey: string;
+  accountLabel: string | null;
+  name: string;
+  symbol: string;
+  assetClass: AssetClass;
+  shares: number;
+  costPrice: number | null;
+  note: string | null;
+  updatedAt: string;
+  price: number;
+  changePct: number;
+  marketValue: number;
+  weight: number;
+  pnlPct: number | null;
+  signal: Signal;
+  strategyUsed: string;
+  loaded: 'csv' | 'real' | 'simulated';
+  stale: boolean;
+  lowConfidence: boolean;
+  proxyNote?: string;
+}
+
+export interface PortfolioSummary {
+  totalValue: number;
+  holdingsCount: number;
+  allocation: { fundPct: number; metalPct: number };
+  actionCounts: { buy: number; sell: number; hold: number };
+  weightedScore: number;
+  overallTone: '偏多' | '偏空' | '观望';
+  advisories: string[];
+  fundStrategy: string;
+  goldStrategy: string;
+  items: PortfolioItem[];
 }

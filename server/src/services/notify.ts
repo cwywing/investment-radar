@@ -2,16 +2,23 @@
 //
 // 核心规则(C5 通知不打扰):
 // - hold 不推(观望不打扰)
-// - 首次见到某资产(无历史状态):只记录基线,不推(避免首次部署刷屏 8 条)
+// - 首次见到某资产(无历史状态):只记录基线,不推(避免首次部署刷屏)
 // - 仅当 prevAction 已定义 且 与 currAction 不同 且 currAction 非 hold 才推
 // - 同一 (资产,动作) 24h 内不重复推(防抖)
 // - 状态落盘 signal-state.json:进程重启后不重推已发过的信号
 //
-// 通道(C6 通道失败不崩):CompositeNotifier 逐通道 try/catch,任一失败只 warn,
-// 不影响其他通道、不影响调度/扫描主流程。
+// 组合模式(有持仓时):
+// - 只扫描持仓标的,不推未持有资产(减少噪音)
+// - 卖出信号:仅当仓位 >= PORTFOLIO_SELL_MIN_WEIGHT(默认 20%) 才推
+// - 买入信号:持有即推(仓位变动建议)
+//
+// 通道(C6):CompositeNotifier 逐通道 try/catch,失败只 warn。
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { isDatabaseReady } from '../db/database.js';
+import { listHoldings } from '../db/holdings.js';
 import { scanAll } from './scan.js';
+import { buildPortfolioSummary, type PortfolioItem } from './portfolio.js';
 import type { AssetRadarItem } from '../types.js';
 
 export interface Notification {
@@ -23,7 +30,11 @@ export interface Notification {
   price: number;
   changePct: number;
   reasons: string[];
-  intraday?: boolean; // 是否为盘中估值驱动的信号
+  intraday?: boolean;
+  /** 组合模式:仓位占比 0~1 */
+  portfolioWeight?: number;
+  /** 组合模式:附加说明行 */
+  portfolioLine?: string;
 }
 
 export interface Notifier {
@@ -31,7 +42,6 @@ export interface Notifier {
   send(n: Notification): Promise<void>;
 }
 
-// 复合通道:逐个发送,任一失败不阻断其他通道,也不抛错(C6)。
 export class CompositeNotifier implements Notifier {
   name = 'composite';
   constructor(private notifiers: Notifier[]) {}
@@ -46,7 +56,6 @@ export class CompositeNotifier implements Notifier {
   }
 }
 
-// ---- 模块级默认配置(由 index.ts 启动时设置)----
 let defaultNotifiers: Notifier[] = [];
 let defaultStateFile: string | undefined;
 
@@ -57,10 +66,15 @@ export function configureStateFile(path: string | undefined): void {
   defaultStateFile = path;
 }
 
-// ---- 信号状态(落盘)----
+/** 组合卖出推送最低仓位(0~1),可通过 PORTFOLIO_SELL_MIN_WEIGHT 覆盖 */
+export function portfolioSellMinWeight(): number {
+  const raw = Number(process.env.PORTFOLIO_SELL_MIN_WEIGHT);
+  return Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : 0.2;
+}
+
 interface SignalState {
-  actions: Record<string, 'buy' | 'sell' | 'hold'>;     // 资产 → 上次动作
-  lastSent: Record<string, number>;                      // "assetId:action" → 上次推送时间戳
+  actions: Record<string, 'buy' | 'sell' | 'hold'>;
+  lastSent: Record<string, number>;
 }
 
 function loadState(file?: string): SignalState {
@@ -82,12 +96,71 @@ function saveState(state: SignalState, file?: string): void {
   }
 }
 
-const DEDUP_MS = 24 * 60 * 60 * 1000; // 24h 防抖
+const DEDUP_MS = 24 * 60 * 60 * 1000;
 const ACTION_TEXT = { buy: '建议买入', sell: '建议卖出' } as const;
 
-function toNotification(item: AssetRadarItem): Notification {
+function portfolioToRadarItem(item: PortfolioItem): AssetRadarItem {
+  const label = item.accountLabel ?? item.accountKey;
   return {
-    assetId: item.id,
+    id: item.holdingKey,
+    name: label === 'default' ? item.name : `${item.name} · ${label}`,
+    symbol: item.symbol,
+    assetClass: item.assetClass,
+    price: item.price,
+    changePct: item.changePct,
+    signal: item.signal,
+    loaded: item.loaded,
+    stale: item.stale,
+    lowConfidence: item.lowConfidence,
+  };
+}
+
+interface NotifyContext {
+  items: AssetRadarItem[];
+  portfolioById: Map<string, PortfolioItem>;
+  portfolioMode: boolean;
+  portfolioSummaryLine?: string;
+}
+
+function resolveNotifyContext(strategyId?: string): NotifyContext {
+  if (isDatabaseReady() && listHoldings().length > 0) {
+    const summary = buildPortfolioSummary();
+    const portfolioById = new Map(summary.items.map((i) => [i.holdingKey, i]));
+    const items = summary.items.map(portfolioToRadarItem);
+    const summaryLine = `组合 ${summary.holdingsCount} 只 · 加权 ${summary.weightedScore}(${summary.overallTone}) · 市值 ${summary.totalValue}`;
+    return {
+      items,
+      portfolioById,
+      portfolioMode: true,
+      portfolioSummaryLine: summaryLine,
+    };
+  }
+  return {
+    items: scanAll(strategyId ?? 'goldFactor'),
+    portfolioById: new Map(),
+    portfolioMode: false,
+  };
+}
+
+function toNotification(item: AssetRadarItem, ctx: NotifyContext): Notification {
+  const pItem = ctx.portfolioById.get(item.id);
+  const weight = pItem?.weight;
+  const weightPct = weight !== undefined ? `${(weight * 100).toFixed(1)}%` : undefined;
+  let portfolioLine: string | undefined;
+  if (ctx.portfolioMode && weightPct) {
+    portfolioLine = `占组合 ${weightPct}`;
+    if (item.signal.action === 'sell' && weight !== undefined && weight >= portfolioSellMinWeight()) {
+      portfolioLine += ' · 【重仓卖出】';
+    }
+    if (ctx.portfolioSummaryLine) {
+      portfolioLine += ` · ${ctx.portfolioSummaryLine}`;
+    }
+  }
+
+  const baseAssetId = pItem?.assetId ?? item.id;
+
+  return {
+    assetId: baseAssetId,
     name: item.name,
     action: item.signal.action as 'buy' | 'sell',
     actionText: ACTION_TEXT[item.signal.action as 'buy' | 'sell'],
@@ -96,48 +169,76 @@ function toNotification(item: AssetRadarItem): Notification {
     changePct: item.intraday?.changePct ?? item.changePct,
     reasons: item.signal.reasons.slice(0, 3),
     intraday: !!item.intraday?.isEstimate,
+    portfolioWeight: weight,
+    portfolioLine,
   };
 }
 
-// 扫描并推送信号变化。items 可注入(测试用),默认用 scanAll。
-// 返回发送/跳过计数。绝不抛错(调度调用方安全)。
+function shouldSkipPortfolioNotify(
+  item: AssetRadarItem,
+  curr: 'buy' | 'sell' | 'hold',
+  ctx: NotifyContext,
+): boolean {
+  if (!ctx.portfolioMode) return false;
+  const pItem = ctx.portfolioById.get(item.id);
+  if (!pItem) return true;
+  if (curr === 'sell' && pItem.weight < portfolioSellMinWeight()) return true;
+  return false;
+}
+
 export async function scanAndNotify(opts: {
   items?: AssetRadarItem[];
   strategyId?: string;
   notifiers?: Notifier[];
   stateFile?: string;
   now?: number;
-} = {}): Promise<{ sent: number; skipped: number }> {
+  portfolioById?: Map<string, PortfolioItem>;
+  portfolioMode?: boolean;
+} = {}): Promise<{ sent: number; skipped: number; portfolioMode: boolean }> {
   const notifiers = opts.notifiers ?? defaultNotifiers;
   const stateFile = opts.stateFile ?? defaultStateFile;
   const now = opts.now ?? Date.now();
-  const items = opts.items ?? scanAll(opts.strategyId ?? 'goldFactor');
+
+  let ctx: NotifyContext;
+  if (opts.items) {
+    ctx = {
+      items: opts.items,
+      portfolioById: opts.portfolioById ?? new Map(),
+      portfolioMode: opts.portfolioMode ?? false,
+    };
+  } else {
+    ctx = resolveNotifyContext(opts.strategyId);
+  }
 
   if (notifiers.length === 0) {
-    return { sent: 0, skipped: items.length }; // 无通道,静默跳过
+    return { sent: 0, skipped: ctx.items.length, portfolioMode: ctx.portfolioMode };
   }
+
   const composite = new CompositeNotifier(notifiers);
   const state = loadState(stateFile);
 
   let sent = 0;
   let skipped = 0;
-  for (const item of items) {
+  for (const item of ctx.items) {
     const curr = item.signal.action;
     const prev = state.actions[item.id];
 
-    // 首次见到该资产:只记基线,不推(避免首次部署刷屏)
     if (prev === undefined) {
       state.actions[item.id] = curr;
       skipped++;
       continue;
     }
-    // 无变化 或 当前 hold:不推
     if (prev === curr || curr === 'hold') {
       state.actions[item.id] = curr;
       skipped++;
       continue;
     }
-    // 24h 防抖:同一 (资产,动作) 近期推过则跳过
+    if (shouldSkipPortfolioNotify(item, curr, ctx)) {
+      state.actions[item.id] = curr;
+      skipped++;
+      continue;
+    }
+
     const dedupKey = `${item.id}:${curr}`;
     const last = state.lastSent[dedupKey];
     if (last && now - last < DEDUP_MS) {
@@ -146,18 +247,17 @@ export async function scanAndNotify(opts: {
       continue;
     }
 
-    // 发送
-    const n = toNotification(item);
+    const n = toNotification(item, ctx);
     try {
       await composite.send(n);
       sent++;
       state.lastSent[dedupKey] = now;
     } catch {
-      // CompositeNotifier 内部已 catch,这里兜底以防意外
+      // CompositeNotifier 内部已 catch
     }
     state.actions[item.id] = curr;
   }
 
   saveState(state, stateFile);
-  return { sent, skipped };
+  return { sent, skipped, portfolioMode: ctx.portfolioMode };
 }

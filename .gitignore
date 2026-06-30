@@ -42,6 +42,10 @@ server/data/csv/*
 # Runtime 通知状态(每次运行生成,不提交)
 server/data/signal-state.json
 
+# 用户持仓 SQLite(私有数据,不提交)
+server/data/radar.db
+server/data/radar.db-*
+
 # Cache
 .cache/
 *.local

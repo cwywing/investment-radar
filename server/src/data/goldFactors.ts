@@ -1,4 +1,7 @@
 import type { Candle } from '../types.js';
+import { browserHeaders } from './providers/_headers.js';
+import { loadFactors, saveFactors, getLatestFactorDate, type FactorRow } from '../db/candles.js';
+import { isDatabaseReady } from '../db/database.js';
 
 // 黄金多因子历史数据(ChatGPT/Gemini 核心建议的"黄金定价拆解"驱动因子)。
 //
@@ -86,54 +89,94 @@ export function parseEmKlines(json: unknown): FactorDaily[] {
     .filter((x) => Number.isFinite(x.close) && x.close > 0);
 }
 
-// —— 抓取(带 24h 缓存:日线数据日内不变) ——
+// —— 抓取(带 24h 内存缓存:日线数据日内不变) + SQLite 持久化(跨重启复用历史) ——
 const DAY_MS = 24 * 3600 * 1000;
 interface Cached { ts: number; data: FactorDaily[]; }
 const cache = new Map<string, Cached>();
 
-async function fetchCached(key: string, fetcher: () => Promise<FactorDaily[]>): Promise<FactorDaily[]> {
-  const hit = cache.get(key);
+// 统一:读 SQLite 历史 + 增量抓 beg=latestDate + 回写。内存 24h 缓存避免短时重复读库/抓取。
+async function fetchFactorSeries(
+  series: 'xau' | 'cnh' | 'dxy',
+  fetcher: (beg?: string) => Promise<FactorDaily[]>,
+): Promise<FactorDaily[]> {
+  const hit = cache.get(series);
   if (hit && Date.now() - hit.ts < DAY_MS) return hit.data;
-  const data = await fetcher();
-  if (data.length > 0) cache.set(key, { ts: Date.now(), data });
-  return data;
+
+  // 读 SQLite 历史
+  const cached: FactorDaily[] = isDatabaseReady() ? loadFactors(series).map((r: FactorRow) => ({ date: r.date, close: r.close })) : [];
+  const beg = cached.length > 0 ? getLatestFactorDate(series)! : undefined;
+
+  let fresh: FactorDaily[] = [];
+  try {
+    fresh = await fetcher(beg);
+  } catch (e) {
+    // 抓取失败:有历史就用历史,无历史返回空(enrichGoldCandles 会回退纯 grid)
+    console.warn(`⚠ [factor:${series}] 抓取失败: ${String((e as Error).message || e).slice(0, 60)}`);
+    if (cached.length > 0) {
+      if (!hit) cache.set(series, { ts: Date.now(), data: cached });
+      return cached;
+    }
+    return [];
+  }
+
+  // 合并:历史 immutable + 增量 upsert
+  const merged = mergeFactors(cached, fresh);
+  // 回写 SQLite(只写增量)
+  if (isDatabaseReady() && fresh.length > 0) {
+    try { saveFactors(series, fresh); }
+    catch (e) { console.warn(`⚠ [factor:${series}] SQLite 写失败: ${String((e as Error).message || e).slice(0, 60)}`); }
+  }
+  if (merged.length > 0) cache.set(series, { ts: Date.now(), data: merged });
+  return merged;
 }
 
-const UA = { 'User-Agent': 'Mozilla/5.0 (radar-server)', Referer: 'https://finance.sina.com.cn' };
+function mergeFactors(cached: FactorDaily[], fresh: FactorDaily[]): FactorDaily[] {
+  if (fresh.length === 0) return cached;
+  if (cached.length === 0) return fresh;
+  const byDate = new Map(cached.map((c) => [c.date, c]));
+  for (const f of fresh) byDate.set(f.date, f);
+  return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
 
 export async function fetchXauDaily(): Promise<FactorDaily[]> {
-  return fetchCached('xau', async () => {
+  return fetchFactorSeries('xau', async (beg) => {
+    // 新浪无 beg 参数,拉全量后过滤(XAU 序列不大)
     const url = 'https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var_XAU/GlobalFuturesService.getGlobalFuturesDailyKLine?symbol=XAU&_=';
-    const res = await fetch(url, { headers: UA });
+    const res = await fetch(url, { headers: browserHeaders('https://finance.sina.com.cn/') });
     if (!res.ok) return [];
     const text = await res.text();
-    return parseXauJsonp(text);
+    const all = parseXauJsonp(text);
+    return beg ? all.filter((x) => x.date >= beg) : all;
   });
 }
 
 export async function fetchCnhDaily(): Promise<FactorDaily[]> {
-  return fetchCached('cnh', async () => {
+  return fetchFactorSeries('cnh', async (beg) => {
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const begParam = beg ? beg.replace(/-/g, '') : '20100101';
+    const lmt = beg ? 30 : 5000;
     const url =
       'https://push2his.eastmoney.com/api/qt/stock/kline/get'
-      + '?secid=133.USDCNH&klt=101&fqt=0&beg=20100101&end=' + today
-      + '&lmt=5000&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56'
+      + '?secid=133.USDCNH&klt=101&fqt=0&beg=' + begParam + '&end=' + today
+      + `&lmt=${lmt}&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56`
       + '&ut=fa5fd1943c7b386f172d6893dbbd1';
-    const res = await fetch(url, { headers: { 'User-Agent': UA['User-Agent'] } });
+    const res = await fetch(url, { headers: browserHeaders('https://quote.eastmoney.com/') });
     if (!res.ok) return [];
     return parseEmKlines(await res.json());
   });
 }
 
 export async function fetchDxyDaily(): Promise<FactorDaily[]> {
-  return fetchCached('dxy', async () => {
+  return fetchFactorSeries('dxy', async (beg) => {
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const begParam = beg ? beg.replace(/-/g, '') : '20100101';
+    const lmt = beg ? 30 : 5000;
     const url =
       'https://push2his.eastmoney.com/api/qt/stock/kline/get'
-      + '?secid=100.UDI&klt=101&fqt=0&beg=20100101&end=' + today
-      + '&lmt=5000&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56'
+      + '?secid=100.UDI&klt=101&fqt=0&beg=' + begParam + '&end=' + today
+      + `&lmt=${lmt}&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56`
       + '&ut=fa5fd1943c7b386f172d6893dbbd1';
-    const res = await fetch(url, { headers: { 'User-Agent': UA['User-Agent'] } });
+    const res = await fetch(url, { headers: browserHeaders('https://quote.eastmoney.com/') });
     if (!res.ok) return [];
     return parseEmKlines(await res.json());
   });

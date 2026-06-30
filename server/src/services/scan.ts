@@ -68,6 +68,7 @@ export function scanAll(strategyId: string): AssetRadarItem[] {
       stale: src?.stale ?? false,
       intraday: src?.intraday,
       lowConfidence: isLowConfidence(bt, loaded),
+      proxyNote: src?.proxyNote,
     };
   });
 }

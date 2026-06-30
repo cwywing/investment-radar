@@ -1,27 +1,31 @@
 import type { Candle } from '../../types.js';
+import { browserHeaders } from './_headers.js';
 
 // 天天基金历史净值接口。fundCode 为6位基金代码。
 // 返回字段:FSRQ=日期, DWJZ=单位净值, JZZZL=涨跌幅%。
 // 注意:该接口单页最多返回 20 条(pageSize 超过会被静默置空),
 // 且 pageSize>=300 会返回空。因此采用分页拉取。
 // 基金只有收盘净值,合成 open=high=low=close=单位净值的"净值K线"。
+// 反爬:必须带 Referer(fund.eastmoney.com),否则返回空。UA 拟人化保持稳定。
 const LSJZ_URL = 'http://api.fund.eastmoney.com/f10/lsjz';
 const PAGE_SIZE = 20;
 const TARGET_RECORDS = 600; // 约2年半日净值
 const MAX_PAGES = Math.ceil(TARGET_RECORDS / PAGE_SIZE);
 
-export async function fetchFundCandles(fundCode: string): Promise<Candle[]> {
-  const headers = {
-    Referer: 'http://fund.eastmoney.com/',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-  };
+export async function fetchFundCandles(fundCode: string, beg?: string): Promise<Candle[]> {
+  const headers = browserHeaders('http://fund.eastmoney.com/');
   const collected: any[] = [];
   let pageIndex = 1;
 
-  for (; pageIndex <= MAX_PAGES; pageIndex++) {
+  // 增量:beg 非空时传 startDate=beg,只拉 beg 及之后净值(最新一两日修正)。
+  // 增量数据少,最多拉 3 页(60 条,覆盖假期后补抓);全量按原 MAX_PAGES。
+  const maxPages = beg ? 3 : MAX_PAGES;
+
+  for (; pageIndex <= maxPages; pageIndex++) {
     const url =
       `${LSJZ_URL}?fundCode=${encodeURIComponent(fundCode)}`
-      + `&pageIndex=${pageIndex}&pageSize=${PAGE_SIZE}`;
+      + `&pageIndex=${pageIndex}&pageSize=${PAGE_SIZE}`
+      + (beg ? `&startDate=${beg}` : '');
     const res = await fetch(url, { headers });
     if (!res.ok) throw new Error(`天天基金接口返回 ${res.status}`);
     const json: any = await res.json();

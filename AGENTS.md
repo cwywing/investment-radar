@@ -5,7 +5,7 @@
 @constraints C1,C2,C3,C4,C5,C6,C7
 @commands npm test, npm run build, npm run dev, npm run test:live -w server, npm run audit -w server
 @keywords investment-radar, must-hold, maker-checker, harness-first, eval-first, no-trade, simulated-data, signal-determinism
-@updated 2026-06-29
+@updated 2026-06-30
 -->
 
 # AGENTS.md — Investment Radar (投资雷达)
@@ -37,10 +37,13 @@
 Monorepo（npm workspaces）：
 
 - `server/` — Express + TypeScript + tsx + node:test，ESM（`"type": "module"`）
-  - `src/data/providers/` 多源行情抓取 + `simulator.ts` 兜底
+  - `src/db/` SQLite 持久化（database schema/迁移 + holdings + candles/factors CRUD）
+  - `src/data/providers/` 多源行情抓取（eastmoney/tiantian/fundgz/sina/csv）+ `simulator.ts` 兜底
+  - `src/data/goldFactors.ts` 黄金多因子抓取+对齐，历史入 SQLite
   - `src/indicators/` 技术指标（MUST 纯函数）
   - `src/strategies/` 评分策略（MUST 纯函数）
-  - `src/services/` backtest / notify / scan
+  - `src/services/` backtest / notify / scan / portfolio / holdingsImport
+  - `src/routes/` Express 路由（assets / holdings）
   - `src/notifiers/` log / mail / serverchan
   - `src/scheduler.ts` 定时扫描
   - `src/test/` node:test
@@ -93,7 +96,11 @@ npm run audit -w server       # 回测审计脚本
 |------|----------|
 | 行情缓存（内存，TTL 1h） | TTL 到期；交易日 15:30/22:00 主动失效 |
 | 回测缓存（内存，键 `assetId:strategyId`） | **数据刷新后 MUST 失效**（已知隐患待修） |
+| `candles` 表（SQLite `server/data/radar.db`） | K线持久化，启动读库只增量抓最新；历史 immutable，最新一两日 upsert |
+| `factors` 表（SQLite） | 黄金多因子 xau/cnh/dxy 历史；反爬时回退读库 |
+| `holdings` / `holdings_history` 表（SQLite） | 用户持仓+变更历史（多账户）；手动改/CSV导入覆盖 |
 | `signal-state.json` | 每次扫描覆写；7 天未变化清理 |
+| `AssetConfig` 模拟参数 | 真实数据可用即被覆盖；**模拟数据 NEVER 入 SQLite** |
 
 ## 8. 边界（NEVER 主动做）
 

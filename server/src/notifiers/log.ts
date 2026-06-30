@@ -5,9 +5,10 @@ export class LogNotifier implements Notifier {
   name = 'log';
   async send(n: Notification): Promise<void> {
     const tag = n.intraday ? ' [盘中估值]' : '';
+    const pf = n.portfolioLine ? ` ${n.portfolioLine}` : '';
     console.log(
       `🔔 [${n.actionText}] ${n.name} 分数${n.score > 0 ? '+' : ''}${n.score} ` +
-      `价${n.price}(${n.changePct >= 0 ? '+' : ''}${n.changePct}%)${tag}`,
+      `价${n.price}(${n.changePct >= 0 ? '+' : ''}${n.changePct}%)${tag}${pf}`,
     );
     console.log(`   理由: ${n.reasons.join(' / ')}`);
   }

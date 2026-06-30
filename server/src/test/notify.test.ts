@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { writeFileSync, rmSync } from 'node:fs';
 import { scanAndNotify, type Notifier, type Notification } from '../services/notify.js';
 import type { AssetRadarItem, Signal } from '../types.js';
+import type { PortfolioItem } from '../services/portfolio.js';
 
 // 假通道:记录发送内容,可选抛错(测 C6)。
 function mockNotifier(throw_: boolean = false): Notifier & { sent: Notification[] } {
@@ -99,5 +100,51 @@ test('无通道时静默跳过,不抛错', async () => {
   await scanAndNotify({ items: [item('a', 'hold')], notifiers: [], stateFile: f });
   const r = await scanAndNotify({ items: [item('a', 'buy')], notifiers: [], stateFile: f });
   assert.equal(r.sent, 0);
+  rmSync(f, { force: true });
+});
+
+test('组合模式:轻仓卖出不推,重仓卖出推', async () => {
+  const ch = mockNotifier();
+  const f = tmpState('portfolio-sell');
+  const pf = (id: string, weight: number) =>
+    ({ assetId: id, holdingKey: id, weight } as PortfolioItem);
+  const portfolioById = new Map([
+    ['light', pf('light', 0.1)],
+    ['heavy', pf('heavy', 0.3)],
+  ]);
+
+  await scanAndNotify({
+    items: [item('light', 'hold'), item('heavy', 'hold')],
+    notifiers: [ch], stateFile: f, portfolioMode: true, portfolioById,
+  });
+
+  const r = await scanAndNotify({
+    items: [item('light', 'sell'), item('heavy', 'sell')],
+    notifiers: [ch], stateFile: f, portfolioMode: true, portfolioById,
+  });
+
+  assert.equal(r.sent, 1, '仅重仓卖出应推送');
+  assert.equal(ch.sent.length, 1);
+  assert.equal(ch.sent[0].assetId, 'heavy');
+  assert.ok(ch.sent[0].portfolioLine?.includes('重仓'));
+  rmSync(f, { force: true });
+});
+
+test('组合模式:持有标的买入信号仍推送', async () => {
+  const ch = mockNotifier();
+  const f = tmpState('portfolio-buy');
+  const portfolioById = new Map([
+    ['a', { assetId: 'a', holdingKey: 'a', weight: 0.05 } as PortfolioItem],
+  ]);
+
+  await scanAndNotify({
+    items: [item('a', 'hold')], notifiers: [ch], stateFile: f,
+    portfolioMode: true, portfolioById,
+  });
+  const r = await scanAndNotify({
+    items: [item('a', 'buy')], notifiers: [ch], stateFile: f,
+    portfolioMode: true, portfolioById,
+  });
+  assert.equal(r.sent, 1);
   rmSync(f, { force: true });
 });

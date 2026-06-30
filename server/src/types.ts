@@ -90,6 +90,7 @@ export interface AssetRadarItem {
   stale: boolean;                       // C2:最新K线过期,前端警告
   intraday?: IntradaySnapshot;          // 盘中估值/实时最新价(不注入策略序列)
   lowConfidence?: boolean;              // C3:该信号历史回测胜率<50%(matched>=10),前端标灰警示 F4
+  proxyNote?: string;                   // C1:近似数据源说明(如"沪金期货主力近似"),非空时前端标橙
 }
 
 // 盘中快照:基金=估值(fundgz),黄金=实时最新价(eastmoney)。

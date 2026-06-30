@@ -1,0 +1,5 @@
+asset_id,account_key,account_label,shares,cost_price,note
+au9999,cmb-1852,招行黄金(1852),6.6366,1173.01,招行黄金账户
+au9999,icbc-2327,工行积存金(2327),7.9285,1024.02,工行积存金
+# account_key: 小写/数字/下划线/连字符,同一 asset_id 可有多行(多账户)
+# 导入: POST /api/holdings/import  body: { "csv": "..." }

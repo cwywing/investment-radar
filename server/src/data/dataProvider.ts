@@ -2,10 +2,19 @@ import type { Asset, AssetConfig, AssetClass, Candle, IntradaySnapshot } from '.
 import { ASSET_CONFIGS, getAssetConfig } from './assets.js';
 import { generateSimulated } from './simulator.js';
 import { fetchGoldCandles, fetchGoldQuote } from './providers/eastmoney.js';
+import { fetchSinaFuturesCandles } from './providers/sina.js';
 import { enrichGoldCandles } from './goldFactors.js';
 import { fetchFundCandles } from './providers/tiantian.js';
 import { fetchFundEstimate } from './providers/fundgz.js';
 import { loadCsvCandles } from './providers/csv.js';
+import { loadCandles, saveCandles, getLatestDate } from '../db/candles.js';
+import { isDatabaseReady } from '../db/database.js';
+
+// au9999 东方财富行情接口被反爬封锁时的近似兜底:用新浪 AU0(沪金期货主力连续)。
+// 走势与 au9999 现货高度同步,基差通常几元/克。映射 au9999 → AU0 期货主力代码。
+// 仅 au9999 启用(ag9999/pt9995 新浪无对应主力连续代码,保持原行为走模拟兜底)。
+const GOLD_PROXY_SINA: Record<string, string> = { au9999: 'AU0' };
+export const GOLD_PROXY_NOTE = '沪金期货主力近似';
 
 // 三级数据源架构,优先级:CSV导入 > 在线真实数据 > 模拟数据。
 // 上层(getAsset / getAllAssets)接口保持不变,策略与前端零改动。
@@ -31,6 +40,7 @@ interface CacheEntry {
   usedProvider: string;        // 命中的历史源
   intraday?: IntradaySnapshot; // 盘中快照(可有可无)
   stale: boolean;              // C2:最新K线是否过期
+  proxyNote?: string;          // C1:近似数据源说明(如"沪金期货主力近似"),非空时前端标橙
 }
 
 const TTL = 1000 * 60 * 60; // 在线数据缓存 1 小时(实时性 vs 限流的平衡)
@@ -72,16 +82,16 @@ export function refreshAsset(id: string): Promise<void> {
   const cfg = getAssetConfig(id);
   if (!cfg) return Promise.resolve();
   return retry(() => loadReal(cfg), 3)
-    .then(async ({ candles, usedProvider }) => {
+    .then(async ({ candles, usedProvider, proxyNote }) => {
       const intraday = await fetchSnapshot(cfg).catch(() => null);
       const lastDate = candles.at(-1)?.date ?? '';
       const stale = isStale(lastDate, cfg.assetClass);
       cache.set(id, {
         asset: { ...cfg, candles }, ts: Date.now(), from: 'real',
-        usedProvider, intraday: intraday ?? undefined, stale,
+        usedProvider, intraday: intraday ?? undefined, stale, proxyNote,
       });
       console.log(
-        `📡 [${id}] 已加载真实数据 ${candles.length} 根K线 (源:${usedProvider}${intraday ? ` +快照:${intraday.source}` : ''})` +
+        `📡 [${id}] 已加载真实数据 ${candles.length} 根K线 (源:${usedProvider}${intraday ? ` +快照:${intraday.source}` : ''}${proxyNote ? ` 近似:${proxyNote}` : ''})` +
         (stale ? ` ⚠ 最新K线${lastDate}已过期` : ''),
       );
       // 通知订阅者(如 scan 清回测缓存):数据已更新,旧派生结果应失效
@@ -105,10 +115,11 @@ export function getAssetSource(id: string): {
   usedProvider: string;
   intraday?: IntradaySnapshot;
   stale: boolean;
+  proxyNote?: string;
 } | undefined {
   const e = cache.get(id);
   if (!e) return undefined;
-  return { loaded: e.from, usedProvider: e.usedProvider, intraday: e.intraday, stale: e.stale };
+  return { loaded: e.from, usedProvider: e.usedProvider, intraday: e.intraday, stale: e.stale, proxyNote: e.proxyNote };
 }
 
 // 后台预热:为所有标的异步加载。逐个间隔拉取(避免并发触发接口限流),
@@ -155,6 +166,7 @@ export interface AssetSourceStatus {
   intraday?: IntradaySnapshot;
   stale: boolean;          // C2:最新K线是否过期
   candles: number;
+  proxyNote?: string;      // C1:近似数据源说明
 }
 
 export function getSourceStatus(): AssetSourceStatus[] {
@@ -170,32 +182,97 @@ export function getSourceStatus(): AssetSourceStatus[] {
       intraday: entry?.intraday,
       stale: entry?.stale ?? false,
       candles: entry?.asset.candles.length ?? getAsset(cfg.id)?.candles.length ?? 0,
+      proxyNote: entry?.proxyNote,
     };
   });
 }
 
-// 实际加载逻辑:CSV > 在线。模拟数据在调用方兜底。
-// 返回命中的历史源,供上层标注 usedProvider。
-async function loadReal(cfg: AssetConfig): Promise<{ candles: Candle[]; usedProvider: string }> {
-  // 1) CSV 导入(最高优先级)
+// 实际加载逻辑:CSV > SQLite 历史 + 在线增量。模拟数据在调用方兜底。
+// SQLite 存历史日线(immutable),启动/刷新时读库 + 只增量抓 beg=lastDate 之后的最新。
+// 增量抓到的最新一两日 upsert 回库(覆盖修正)。模拟数据不入库。
+// 返回命中的历史源,供上层标注 usedProvider。proxyNote 非空表示用了近似数据源(C1)。
+async function loadReal(cfg: AssetConfig): Promise<{ candles: Candle[]; usedProvider: string; proxyNote?: string }> {
+  // 1) CSV 导入(最高优先级,不入库 —— 文件改动立即生效)
   const csv = loadCsvCandles(cfg.id);
   if (csv && csv.length > 10) return { candles: csv, usedProvider: 'csv' };
 
-  // 2) 在线真实数据
+  // 2) 在线真实数据(SQLite 历史 + 增量抓取)
   if (cfg.source === 'eastmoney_gold' && cfg.secid) {
-    const raw = await fetchGoldCandles(cfg.secid);
-    // 黄金额外挂载多因子(XAU/CNH/DXY/溢价)到每根 K 线,best-effort:
-    // 失败返回原线,goldFactor 策略自动回退纯 grid。仅对黄金有意义。
-    const candles = cfg.assetClass === 'metal' ? await enrichGoldCandles(raw) : raw;
-    return { candles, usedProvider: 'eastmoney_gold' };
+    const cached = loadCandles(cfg.id);
+    const beg = cached.length > 0 ? getLatestDate(cfg.id)! : undefined;
+    if (cached.length > 0) console.log(`📚 [${cfg.id}] 读库 ${cached.length} 根历史, 增量抓 beg=${beg}`);
+    try {
+      const fresh = await fetchGoldCandles(cfg.secid, 600, beg);
+      console.log(`📥 [${cfg.id}] 增量抓取 ${fresh.length} 根 (源: eastmoney_gold)`);
+      const merged = mergeCandles(cached, fresh);
+      const candles = cfg.assetClass === 'metal' ? await enrichGoldCandles(merged) : merged;
+      // 回写 SQLite(只写增量抓到的最新部分,避免重写全量)
+      if (isDatabaseReady()) saveCandles(cfg.id, fresh, 'eastmoney_gold');
+      return { candles, usedProvider: 'eastmoney_gold' };
+    } catch (emErr) {
+      // 东方财富行情接口反爬/不可达时的近似兜底:新浪 AU0 沪金期货主力连续。
+      // 仅对 au9999 启用(ag9999/pt9995 新浪无对应主力连续代码,抛错走模拟兜底)。
+      const sinaSymbol = GOLD_PROXY_SINA[cfg.id];
+      if (sinaSymbol) {
+        try {
+          const fresh = await fetchSinaFuturesCandles(sinaSymbol, 600, beg);
+          console.log(`📥 [${cfg.id}] 增量抓取 ${fresh.length} 根 (源: sina_au0_proxy)`);
+          const merged = mergeCandles(cached, fresh);
+          const candles = cfg.assetClass === 'metal' ? await enrichGoldCandles(merged) : merged;
+          if (isDatabaseReady()) saveCandles(cfg.id, fresh, 'sina_au0_proxy');
+          console.warn(`⚠ [${cfg.id}] 东方财富失败,回退新浪 ${sinaSymbol} 近似: ${String((emErr as Error).message || emErr).slice(0, 60)}`);
+          return { candles, usedProvider: 'sina_au0_proxy', proxyNote: GOLD_PROXY_NOTE };
+        } catch (sinaErr) {
+          // 新浪也失败(含增量无新数据):有 SQLite 历史就回退历史,否则抛错走模拟
+          if (cached.length > 0) {
+            const candles = cfg.assetClass === 'metal' ? await enrichGoldCandles(cached) : cached;
+            console.warn(`⚠ [${cfg.id}] 东财+新浪均失败,回退 SQLite 历史 ${cached.length} 根: ${String((sinaErr as Error).message || sinaErr).slice(0, 60)}`);
+            return { candles, usedProvider: 'sqlite_history' };
+          }
+          throw sinaErr;
+        }
+      }
+      // 无新浪兜底但 SQLite 有历史 → 返回历史(虽不新鲜但优于模拟)
+      if (cached.length > 0) {
+        const candles = cfg.assetClass === 'metal' ? await enrichGoldCandles(cached) : cached;
+        console.warn(`⚠ [${cfg.id}] 东方财富失败且无新浪兜底,回退 SQLite 历史 ${cached.length} 根`);
+        return { candles, usedProvider: 'sqlite_history' };
+      }
+      throw emErr;
+    }
   }
   if (cfg.source === 'eastmoney_fund' && cfg.fundCode) {
-    const candles = await fetchFundCandles(cfg.fundCode);
-    return { candles, usedProvider: 'eastmoney_fund' };
+    const cached = loadCandles(cfg.id);
+    const beg = cached.length > 0 ? getLatestDate(cfg.id)! : undefined;
+    if (cached.length > 0) console.log(`📚 [${cfg.id}] 读库 ${cached.length} 根历史, 增量抓 beg=${beg}`);
+    try {
+      const fresh = await fetchFundCandles(cfg.fundCode, beg);
+      console.log(`📥 [${cfg.id}] 增量抓取 ${fresh.length} 根 (源: eastmoney_fund)`);
+      const merged = mergeCandles(cached, fresh);
+      if (isDatabaseReady()) saveCandles(cfg.id, fresh, 'eastmoney_fund');
+      return { candles: merged, usedProvider: 'eastmoney_fund' };
+    } catch (fundErr) {
+      // 基金接口失败:有 SQLite 历史就回退历史,否则抛错走模拟
+      if (cached.length > 0) {
+        console.warn(`⚠ [${cfg.id}] 天天基金失败,回退 SQLite 历史 ${cached.length} 根: ${String((fundErr as Error).message || fundErr).slice(0, 60)}`);
+        return { candles: cached, usedProvider: 'sqlite_history' };
+      }
+      throw fundErr;
+    }
   }
 
   // 3) source 本就是 simulated —— 抛错让调用方用模拟兜底
   throw new Error('该标的配置为模拟数据源');
+}
+
+// 合并:历史(库) immutable + 增量(新抓)按 date upsert。
+// 增量可能包含 beg 当天(修正)及之后新日期。同 date 以新抓为准。
+function mergeCandles(cached: Candle[], fresh: Candle[]): Candle[] {
+  if (fresh.length === 0) return cached;
+  if (cached.length === 0) return fresh;
+  const byDate = new Map(cached.map((c) => [c.date, c]));
+  for (const f of fresh) byDate.set(f.date, f); // 增量覆盖
+  return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
 function simulatedAsset(cfg: AssetConfig): Asset {

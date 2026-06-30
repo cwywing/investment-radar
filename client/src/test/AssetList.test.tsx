@@ -100,4 +100,34 @@ describe('AssetList — C1/C2 标签 + 盘中快照', () => {
     );
     expect(screen.queryByText('低置信')).not.toBeInTheDocument();
   });
+
+  it('C1: proxyNote 非空 + loaded=real 时,行带 proxy 类与「近似」标签(橙色,区别于模拟)', () => {
+    const { container } = render(
+      <AssetList
+        items={[makeItem({ id: 'px', loaded: 'real', proxyNote: '沪金期货主力近似' })]}
+        activeId={null}
+        onSelect={() => {}}
+      />,
+    );
+    const row = container.querySelector('.signal-row') as HTMLElement;
+    expect(row.className).toContain('proxy');
+    expect(row.className).not.toContain('simulated');
+    expect(within(row).getByText('近似')).toBeInTheDocument();
+    expect(screen.queryByText('模拟')).not.toBeInTheDocument();
+  });
+
+  it('C1: loaded=simulated 时即使有 proxyNote 也不显示「近似」(模拟优先,不叠加)', () => {
+    const { container } = render(
+      <AssetList
+        items={[makeItem({ id: 'simp', loaded: 'simulated', proxyNote: '沪金期货主力近似' })]}
+        activeId={null}
+        onSelect={() => {}}
+      />,
+    );
+    const row = container.querySelector('.signal-row') as HTMLElement;
+    expect(row.className).toContain('simulated');
+    expect(row.className).not.toContain('proxy');
+    expect(within(row).getByText('模拟')).toBeInTheDocument();
+    expect(screen.queryByText('近似')).not.toBeInTheDocument();
+  });
 });
