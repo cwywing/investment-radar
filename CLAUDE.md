@@ -52,7 +52,7 @@ Monorepo（npm workspaces）：
 - `server/` — Express + TypeScript + tsx + node:test，ESM（`"type": "module"`）
   - `src/db/` — SQLite 持久化（`database.ts` schema + 迁移；`holdings.ts` 持仓 CRUD；`candles.ts` K线+因子 CRUD）
   - `src/data/providers/` — 多源行情抓取（eastmoney / tiantian / fundgz / sina / csv）+ simulator 兜底
-  - `src/data/goldFactors.ts` — 黄金多因子（XAU/CNH/DXY）抓取 + 对齐，历史入 SQLite
+  - `src/data/goldFactors.ts` — 黄金多因子（XAU/CNH/DXY/COMEX库存）抓取 + 对齐，历史入 SQLite
   - `src/indicators/` — 技术指标（MA/EMA/MACD/RSI/KDJ/BOLL），MUST 纯函数
   - `src/strategies/` — 评分策略（classic/gold/regime/trend/volFilter），MUST 纯函数
   - `src/services/` — backtest / notify / scan / portfolio / holdingsImport

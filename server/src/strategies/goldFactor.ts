@@ -30,7 +30,7 @@ export const goldFactorStrategy: Strategy = {
   meta: {
     id: 'goldFactor',
     name: '黄金多因子(确认)',
-    desc: 'grid 定方向 + XAU/汇率/溢价/DXY 做确认:同向加分,反向降权(不翻转)',
+    desc: 'grid 定方向 + XAU/汇率/溢价/DXY/COMEX库存 做确认:同向加分,反向降权(不翻转)',
     suitable: '黄金(保住 grid 均值回归边际,用国际因子校准置信)',
   },
   evaluate(asset: Asset): Signal {
@@ -134,10 +134,12 @@ interface FactorResult {
   cnhRet: number;
   dxyRet: number;
   premiumZ: number;
+  comexRet: number;
   xau: number;
   cnh: number;
   dxy: number;
   premium: number;
+  comex: number;
 }
 
 // 取最近一根带因子的 K 线;若近期(末尾 5 根)都没有因子 → 返回 null(回退 grid)。
@@ -164,10 +166,12 @@ function scoreFactors(c: Candle[], momN: number, zN: number): FactorResult | nul
   const cnhSeries = c.map((x) => x.cnh).filter((v): v is number => Number.isFinite(v));
   const dxySeries = c.map((x) => x.dxy).filter((v): v is number => Number.isFinite(v));
   const premSeries = c.map((x) => x.premium).filter((v): v is number => Number.isFinite(v));
+  const comexSeries = c.map((x) => x.comex).filter((v): v is number => Number.isFinite(v));
 
   const xauRet = retOver(xauSeries, momN) ?? 0;
   const cnhRet = retOver(cnhSeries, momN) ?? 0;
   const dxyRet = retOver(dxySeries, momN) ?? 0;
+  const comexRet = retOver(comexSeries, momN) ?? 0;
 
   // 溢价 z-score(近 zN 日)。溢价单位是人民币/克,正常波动在几元量级;
   // 当 std 极小(<0.5 元/克,如取整噪声或溢价长期锁死)时 z 会爆炸,必须归零。
@@ -189,9 +193,12 @@ function scoreFactors(c: Candle[], momN: number, zN: number): FactorResult | nul
   const dxyScore = clamp((-dxyRet / 2) * 100, -100, 100);
   // 溢价 z:z=+2 → 满分看多(国内需求强),z=-2 → 满分看空
   const premScore = clamp((premiumZ / 2) * 100, -100, 100);
+  // COMEX 库存 20 日变化率:库存降 2% → 满分看多(实物提取需求强),
+  //   库存升 2% → 满分看空(交割流入压力,短期阻碍金价)。慢变量,权重轻。
+  const comexScore = clamp((-comexRet / 2) * 100, -100, 100);
 
   const score = clamp(
-    Math.round(xauScore * 0.35 + cnhScore * 0.25 + dxyScore * 0.15 + premScore * 0.25),
+    Math.round(xauScore * 0.30 + cnhScore * 0.20 + dxyScore * 0.15 + premScore * 0.20 + comexScore * 0.15),
     -100, 100,
   );
 
@@ -200,10 +207,14 @@ function scoreFactors(c: Candle[], momN: number, zN: number): FactorResult | nul
   reasons.push(`汇率 USD/CNH ${momN}日 ${cnhRet >= 0 ? '+' : ''}${round1(cnhRet)}%(${cnhRet > 0 ? '人民币贬值,利多金价' : '人民币升值,利空金价'})`);
   if (Number.isFinite(fc.dxy)) reasons.push(`美元指数 DXY ${momN}日 ${dxyRet >= 0 ? '+' : ''}${round1(dxyRet)}% → ${dxyScore < 0 ? '利空金价' : dxyScore > 0 ? '利多金价' : '中性'}`);
   reasons.push(`国内溢价 z=${round1(premiumZ)}(${premiumZ > 0.5 ? '国内买盘偏强' : premiumZ < -0.5 ? '国内买盘偏弱' : '中性'})`);
+  if (comexSeries.length > momN) {
+    reasons.push(`COMEX 库存 ${momN}日 ${comexRet >= 0 ? '+' : ''}${round1(comexRet)}%(${comexRet > 0.5 ? '库存上升,利空金价' : comexRet < -0.5 ? '库存下降,利多金价' : '库存平稳,中性'})`);
+  }
 
   return {
-    score, reasons, xauRet, cnhRet, dxyRet, premiumZ,
+    score, reasons, xauRet, cnhRet, dxyRet, premiumZ, comexRet,
     xau: fc.xau!, cnh: fc.cnh!, dxy: fc.dxy ?? NaN, premium: fc.premium!,
+    comex: Number.isFinite(fc.comex) ? fc.comex! : NaN,
   };
 }
 
@@ -224,6 +235,10 @@ function buildIndicators(
     ind.溢价 = round1(fr.premium);
     ind.XAU_20日 = (fr.xauRet >= 0 ? '+' : '') + round1(fr.xauRet) + '%';
     ind.CNH_20日 = (fr.cnhRet >= 0 ? '+' : '') + round1(fr.cnhRet) + '%';
+    if (Number.isFinite(fr.comex)) {
+      ind.COMEX库存 = round1(fr.comex) + ' 吨';
+      ind.COMEX_20日 = (fr.comexRet >= 0 ? '+' : '') + round1(fr.comexRet) + '%';
+    }
   }
   return ind;
 }

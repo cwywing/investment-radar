@@ -32,10 +32,12 @@ export function alignFactors(
   xau: FactorDaily[],
   cnh: FactorDaily[],
   dxy: FactorDaily[],
+  comex: FactorDaily[] = [],
 ): Candle[] {
   const xauMap = sortByDate(xau);
   const cnhMap = sortByDate(cnh);
   const dxyMap = sortByDate(dxy);
+  const comexMap = sortByDate(comex);
 
   return candles.map((c) => {
     const x = floorValue(xauMap, c.date);
@@ -43,7 +45,8 @@ export function alignFactors(
     const d = floorValue(dxyMap, c.date);
     if (x == null || h == null) return c; // 缺国际金/汇率 → 无法算溢价,整根不加因子
     const premium = c.close - (x * h) / GRAM_PER_OUNCE;
-    return { ...c, xau: x, cnh: h, dxy: d ?? undefined, premium };
+    const cm = floorValue(comexMap, c.date) ?? undefined;
+    return { ...c, xau: x, cnh: h, dxy: d ?? undefined, premium, comex: cm };
   });
 }
 
@@ -96,7 +99,7 @@ const cache = new Map<string, Cached>();
 
 // 统一:读 SQLite 历史 + 增量抓 beg=latestDate + 回写。内存 24h 缓存避免短时重复读库/抓取。
 async function fetchFactorSeries(
-  series: 'xau' | 'cnh' | 'dxy',
+  series: 'xau' | 'cnh' | 'dxy' | 'comex',
   fetcher: (beg?: string) => Promise<FactorDaily[]>,
 ): Promise<FactorDaily[]> {
   const hit = cache.get(series);
@@ -182,13 +185,66 @@ export async function fetchDxyDaily(): Promise<FactorDaily[]> {
   });
 }
 
+// COMEX 黄金库存(吨)—— 东财数据中心 RPT_FUTUOPT_GOLDSIL 接口,黄金 INDICATOR_ID1=EMI00069026。
+// 慢变量(日变化通常<1%),库存升=利空金价(交割流入压力),库存降=利多(实物提取需求强)。
+// 接口无反爬(curl 直连可拿 JSON),仍带 browserHeaders 保险。日频,~24 年历史。
+export function parseComexJson(json: unknown): FactorDaily[] {
+  const rows = (json as { result?: { data?: Array<{ REPORT_DATE: string; STORAGE_TON: string | number | null }> } })?.result?.data;
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((r) => {
+      const date = (r.REPORT_DATE || '').slice(0, 10); // "2026-06-25 00:00:00" → "2026-06-25"
+      const ton = Number(r.STORAGE_TON);
+      return { date, close: ton };
+    })
+    .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.date) && Number.isFinite(x.close) && x.close > 0);
+}
+
+export async function fetchComexInventory(): Promise<FactorDaily[]> {
+  return fetchFactorSeries('comex', async (beg) => {
+    // 接口按 REPORT_DATE 倒序返回。filter 必须是单一字符串(多个条件用 () 串联)。
+    // 全量:pageSize=500 分页直到末页。增量:加 REPORT_DATE>=beg 只拉新数据。
+    const goldFilter = '(INDICATOR_ID1%3D%22EMI00069026%22)(STORAGE_TON%3C%3E%22NULL%22)';
+    const headers = browserHeaders('https://data.eastmoney.com/pmetal/comex/hj.html');
+
+    if (beg) {
+      const filter = goldFilter + `(REPORT_DATE%3E%3D%27${beg}%27)`;
+      const url = 'https://datacenter-web.eastmoney.com/api/data/v1/get'
+        + `?reportName=RPT_FUTUOPT_GOLDSIL&columns=ALL&sortColumns=REPORT_DATE&sortTypes=-1`
+        + `&filter=${filter}&pageNumber=1&pageSize=50`;
+      const res = await fetch(url, { headers });
+      if (!res.ok) return [];
+      return parseComexJson(await res.json());
+    }
+
+    // 全量分页拉取
+    const all: FactorDaily[] = [];
+    for (let page = 1; page <= 30; page++) {
+      const url = 'https://datacenter-web.eastmoney.com/api/data/v1/get'
+        + `?reportName=RPT_FUTUOPT_GOLDSIL&columns=ALL&sortColumns=REPORT_DATE&sortTypes=-1`
+        + `&filter=${goldFilter}&pageNumber=${page}&pageSize=500`;
+      const res = await fetch(url, { headers });
+      if (!res.ok) break;
+      const rows = parseComexJson(await res.json());
+      if (rows.length === 0) break;
+      all.push(...rows);
+      if (rows.length < 500) break; // 末页
+    }
+    // 去重 + 升序
+    const byDate = new Map(all.map((r) => [r.date, r]));
+    return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  });
+}
+
 // best-effort:把 au9999 日线 enrichment 上因子。任一源失败则原样返回
 // (goldFactor 策略检测到因子缺失会自动回退纯 grid 逻辑,不影响可用性)。
 export async function enrichGoldCandles(candles: Candle[]): Promise<Candle[]> {
   try {
-    const [xau, cnh, dxy] = await Promise.all([fetchXauDaily(), fetchCnhDaily(), fetchDxyDaily()]);
+    const [xau, cnh, dxy, comex] = await Promise.all([
+      fetchXauDaily(), fetchCnhDaily(), fetchDxyDaily(), fetchComexInventory(),
+    ]);
     if (xau.length === 0 || cnh.length === 0) return candles;
-    return alignFactors(candles, xau, cnh, dxy);
+    return alignFactors(candles, xau, cnh, dxy, comex);
   } catch {
     return candles;
   }

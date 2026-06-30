@@ -86,7 +86,7 @@
 | 行情数据缓存（内存 Map，TTL 1h） | 避免每请求都打外部接口、防限流 | TTL 到期失效；交易日关键时点（15:30/22:00）主动失效重拉（见 C2） |
 | 回测结果缓存（内存 Map，键 `assetId:strategyId`） | 回测遍历整段历史较重，避免重复算 | **数据刷新后必须失效**——否则会拿旧数据算的胜率配新信号（已识别为现存隐患） |
 | K 线持久化 `candles` 表（SQLite `server/data/radar.db`） | 历史日线 immutable，重启只增量抓最新一两日，抓取量从 600 降到个位数 | 历史日期不更新；最新日期（`>= lastDate`）upsert 修正；数据源切换时 `source` 字段记每根来源 |
-| 黄金多因子 `factors` 表（SQLite） | XAU/CNH/DXY 历史因子复用，东财 push2his 反爬时读库不崩 | 历史 immutable；增量 upsert；抓取失败回退历史因子（enrichGoldCandles 不再回退纯 grid） |
+| 黄金多因子 `factors` 表（SQLite） | XAU/CNH/DXY/COMEX库存 历史因子复用，东财 push2his 反爬时读库不崩 | 历史 immutable；增量 upsert；抓取失败回退历史因子（enrichGoldCandles 不再回退纯 grid） |
 | 用户持仓 `holdings` / `holdings_history` 表（SQLite，多账户） | 跨运行记住持仓，组合通知模式 | 用户手动改写；CSV 导入覆盖；每次变更入 history |
 | 信号状态 `signal-state.json`（落盘） | 通知防抖、重启不重推 | 每次扫描后覆写为最新；单条记录 7 天未变化则清理（防无限堆积） |
 | 模拟参数（`AssetConfig` 里的 seed/drift/volatility） | 离线兜底用 | 真实数据可用时即被覆盖；**模拟数据 NEVER 入 SQLite**（C1）；不作为长期记忆，仅 fallback |

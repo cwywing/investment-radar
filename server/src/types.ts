@@ -18,6 +18,7 @@ export interface Candle {
   cnh?: number;     // 美元兑离岸人民币 USD/CNH 当日收盘
   dxy?: number;     // 美元指数 DXY 当日收盘
   premium?: number; // 国内溢价(人民币/克)= close - xau*cnh/31.1035
+  comex?: number;   // COMEX 黄金库存(吨)—— 慢变量,库存升=利空金价,库存降=利多
 }
 
 // 数据来源类型
