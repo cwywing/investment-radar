@@ -886,8 +886,8 @@ button {
 /* ---------- 我的持仓 ---------- */
 /* 区块间距分级:摘要紧凑、建议→操作→列表逐步留白,避免单一 gap 的平铺感 */
 .portfolio-panel { display: flex; flex-direction: column; gap: 16px; }
-.portfolio-panel > .portfolio-actions-bar { margin-top: 4px; }
-.portfolio-panel > .portfolio-list { margin-top: 6px; }
+.portfolio-panel > .portfolio-actions-bar { margin-top: 22px; }
+.portfolio-panel > .portfolio-list { margin-top: 18px; }
 
 /* 指标条:横向 4 指标,竖线分隔,无边框卡片,呼吸感更强 */
 .portfolio-metrics {
@@ -978,12 +978,19 @@ button {
 .action-btn:hover { background: var(--card); border-color: var(--accent); }
 .action-btn:active { transform: translateY(1px); }
 .action-btn.primary {
-  background: var(--accent);
-  color: #041018;
-  border-color: var(--accent);
+  background: rgba(45, 212, 191, 0.12);
+  color: var(--accent);
+  border: 1px solid var(--accent);
   font-weight: 600;
 }
-.action-btn.primary:hover { filter: brightness(1.08); }
+.action-btn.primary:hover {
+  background: rgba(45, 212, 191, 0.22);
+  box-shadow: 0 0 0 1px var(--accent-glow), 0 4px 14px rgba(45, 212, 191, 0.18);
+}
+[data-theme="light"] .action-btn.primary {
+  background: rgba(13, 148, 136, 0.1);
+  color: var(--accent);
+}
 .action-btn.ghost { background: none; }
 .action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
